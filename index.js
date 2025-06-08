@@ -21,5 +21,3 @@ const server = new Server({
 }, knowledgeGraphManager);
 
 await server.connect(transport);
-console.info(`memento MCP server running`);
-
