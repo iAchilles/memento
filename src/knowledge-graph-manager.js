@@ -245,6 +245,11 @@ export class KnowledgeGraphManager {
      * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[] }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
      */
     async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35 }) {
+        let adjustedThreshold = threshold;
+        if (mode === "semantic" || mode === "hybrid") {
+            adjustedThreshold = 2 * (1 - threshold);
+        }
+        
         if (mode === "keyword") {
             const ftsRows = await this.#db.all(
                 `SELECT DISTINCT entity_id 
@@ -309,21 +314,32 @@ export class KnowledgeGraphManager {
                 
                 const ftsSet = new Set(ftsRows.map(r => r.entity_id));
                 const hybridResults = [];
-
+                
                 for (const row of vecRows) {
-                    if (row.d <= threshold) {
+                    if (row.d <= adjustedThreshold * 1.5) {
                         hybridResults.push({
                             entity_id: row.entity_id,
-                            score: ftsSet.has(row.entity_id) ? row.d * 0.5 : row.d
+                            score: ftsSet.has(row.entity_id) ? row.d * 0.3 : row.d,
+                            d: row.d
                         });
                     }
                 }
-
+                
+                for (const ftsRow of ftsRows) {
+                    if (!hybridResults.find(r => r.entity_id === ftsRow.entity_id)) {
+                        hybridResults.push({
+                            entity_id: ftsRow.entity_id,
+                            score: adjustedThreshold * 0.5,
+                            d: adjustedThreshold * 0.5
+                        });
+                    }
+                }
+                
                 hybridResults.sort((a, b) => a.score - b.score);
                 rows = hybridResults.slice(0, topK);
             }
             
-            const ids = rows.filter(r => r.d <= threshold).map(r => r.entity_id);
+            const ids = rows.filter(r => r.d <= adjustedThreshold).map(r => r.entity_id);
             
             if (ids.length === 0) {
                 return { entities: [], relations: [] };
@@ -342,7 +358,7 @@ export class KnowledgeGraphManager {
             
             if (error.message.includes('no such function')) {
                 console.error('sqlite-vec functions are not available. Verify that the extension has been successfully loaded.');
-
+                
                 return this.searchNodes({ query, mode: 'keyword', topK, threshold });
             }
             

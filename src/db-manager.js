@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS relations (
   UNIQUE(from_id, to_id, relationType)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS obs_fts USING fts5(content, entity_id UNINDEXED);
-CREATE VIRTUAL TABLE IF NOT EXISTS obs_vec USING vec0(entity_id INT, embedding FLOAT[384]);
+CREATE VIRTUAL TABLE IF NOT EXISTS obs_vec USING vec0(entity_id INT, embedding FLOAT[1536]);
     `);
     }
 
