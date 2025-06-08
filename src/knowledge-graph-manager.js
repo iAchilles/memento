@@ -47,7 +47,11 @@ export class KnowledgeGraphManager {
                 "INSERT OR IGNORE INTO entities(name, entityType) VALUES(?, ?)",
                 [ e.name, e.entityType ]
             );
-            if (res.changes) created.push(e);
+
+            if (res.changes) {
+                created.push(e);
+            }
+
             if (e.observations?.length) {
                 await this.addObservations([ { entityName: e.name, contents: e.observations } ]);
             }
@@ -73,23 +77,40 @@ export class KnowledgeGraphManager {
                     "INSERT OR IGNORE INTO observations(entity_id, content) VALUES(?, ?)",
                     [ eid, t ]
                 );
-                if (res.changes) newTexts.push(t);
+                if (res.changes) {
+                    newTexts.push(t);
+                }
             }
+
             if (newTexts.length) {
                 const vecs      = await this.embedTexts(newTexts);
                 const insertVec = await this.#db.prepare(
                     "INSERT INTO obs_vec(entity_id, embedding) VALUES(?, ?)"
                 );
                 await this.#db.exec("BEGIN TRANSACTION");
-                for (const v of vecs) await insertVec.run(eid, v);
+                for (const v of vecs) {
+                    await insertVec.run(eid, v);
+                }
                 await this.#db.exec("COMMIT");
                 await insertVec.finalize();
+
                 const insertFts = await this.#db.prepare(
-                    "INSERT INTO obs_fts(rowid, content, entity_id) VALUES(-1, ?, ?)"
+                    "INSERT INTO obs_fts(content, entity_id) VALUES(?, ?)"
                 );
-                for (const t of newTexts) await insertFts.run(t, eid);
+
+                for (const t of newTexts) {
+                    const obsRow = await this.#db.get(
+                        "SELECT id FROM observations WHERE entity_id = ? AND content = ?",
+                        [eid, t]
+                    );
+                    if (obsRow) {
+                        await insertFts.run(obsRow.id, t, eid);
+                    }
+                }
+
                 await insertFts.finalize();
             }
+
             results.push({ entityName, addedObservations: newTexts });
         }
 
@@ -112,8 +133,12 @@ export class KnowledgeGraphManager {
                 "INSERT OR IGNORE INTO relations(from_id, to_id, relationType) VALUES(?,?,?)",
                 [ fromId, toId, r.relationType ]
             );
-            if (res.changes) created.push(r);
+
+            if (res.changes) {
+                created.push(r);
+            }
         }
+
         return created;
     }
 
@@ -164,7 +189,10 @@ export class KnowledgeGraphManager {
     async deleteObservations(list) {
         for (const { entityName, observations } of list) {
             const eid = await this.getEntityId(entityName);
-            if (!eid) continue;
+            if (!eid) {
+                continue;
+            }
+
             const placeholders = observations.map(() => "?").join(",");
             await this.#db.run(
                 `DELETE
@@ -216,30 +244,108 @@ export class KnowledgeGraphManager {
      */
     async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35 }) {
         if (mode === "keyword") {
-            const q    = `%${query.toLowerCase()}%`;
-            const ents = await this.#db.all(
-                `SELECT DISTINCT e.*
-                 FROM entities e
-                          LEFT JOIN observations o ON o.entity_id = e.id
-                 WHERE LOWER(e.name) LIKE ?
-                    OR LOWER(e.entityType) LIKE ?
-                    OR LOWER(o.content) LIKE ?`,
-                [ q, q, q ]
+            const ftsRows = await this.#db.all(
+                `SELECT DISTINCT entity_id 
+                 FROM obs_fts 
+                 WHERE obs_fts MATCH ?`,
+                [query]
             );
-
-            return this.openNodes(ents.map(e => e.name));
+            
+            const q = `%${query.toLowerCase()}%`;
+            const entityRows = await this.#db.all(
+                `SELECT DISTINCT id as entity_id
+                 FROM entities
+                 WHERE LOWER(name) LIKE ? OR LOWER(entityType) LIKE ?`,
+                [q, q]
+            );
+            
+            const allIds = [...new Set([
+                ...ftsRows.map(r => r.entity_id),
+                ...entityRows.map(r => r.entity_id)
+            ])];
+            
+            if (allIds.length === 0) {
+                return { entities: [], relations: [] };
+            }
+            
+            const placeholders = allIds.map(() => "?").join(",");
+            const entities = await this.#db.all(
+                `SELECT name FROM entities WHERE id IN (${placeholders})`,
+                allIds
+            );
+            
+            return this.openNodes(entities.map(e => e.name));
         }
-        // semantic or hybrid mode
-        const [ qVec ] = await this.embedTexts([ query ]);
-        const rows     = await this.#db.all(
-            `SELECT entity_id, distance(embedding, ?) AS d
-             FROM obs_vec
-             ORDER BY d LIMIT ?`,
-            [ qVec, topK ]
-        );
-        const ids      = rows.filter(r => r.d <= threshold).map(r => r.entity_id);
+        
+        try {
+            const [qVec] = await this.embedTexts([query]);
+            
+            let rows;
+            if (mode === "semantic") {
+                rows = await this.#db.all(
+                    `SELECT entity_id, vec_distance_L2(embedding, ?) AS d
+                     FROM obs_vec
+                     WHERE embedding IS NOT NULL
+                     ORDER BY d 
+                     LIMIT ?`,
+                    [qVec, topK]
+                );
+            } else {
+                const ftsRows = await this.#db.all(
+                    `SELECT DISTINCT entity_id FROM obs_fts WHERE obs_fts MATCH ?`,
+                    [query]
+                );
+                
+                const vecRows = await this.#db.all(
+                    `SELECT entity_id, vec_distance_L2(embedding, ?) AS d
+                     FROM obs_vec
+                     WHERE embedding IS NOT NULL
+                     ORDER BY d 
+                     LIMIT ?`,
+                    [qVec, topK * 2]
+                );
+                
+                const ftsSet = new Set(ftsRows.map(r => r.entity_id));
+                const hybridResults = [];
 
-        return this.openNodes([ ...new Set(ids) ]);
+                for (const row of vecRows) {
+                    if (row.d <= threshold) {
+                        hybridResults.push({
+                            entity_id: row.entity_id,
+                            score: ftsSet.has(row.entity_id) ? row.d * 0.5 : row.d
+                        });
+                    }
+                }
+
+                hybridResults.sort((a, b) => a.score - b.score);
+                rows = hybridResults.slice(0, topK);
+            }
+            
+            const ids = rows.filter(r => r.d <= threshold).map(r => r.entity_id);
+            
+            if (ids.length === 0) {
+                return { entities: [], relations: [] };
+            }
+            
+            const placeholders = ids.map(() => "?").join(",");
+            const entities = await this.#db.all(
+                `SELECT name FROM entities WHERE id IN (${placeholders})`,
+                ids
+            );
+            
+            return this.openNodes(entities.map(e => e.name));
+            
+        } catch (error) {
+            console.error(`Search error in ${mode} mode:`, error.message);
+            
+            if (error.message.includes('no such function')) {
+                console.error('sqlite-vec functions are not available. Verify that the extension has been successfully loaded.');
+
+                return this.searchNodes({ query, mode: 'keyword', topK, threshold });
+            }
+            
+            throw error;
+        }
     }
 
     /**
@@ -335,6 +441,7 @@ export class KnowledgeGraphManager {
                 "INSERT INTO entities(name, entityType) VALUES(?, ?)",
                 [ name, type ]
             );
+
             return r.lastID;
         }
 
