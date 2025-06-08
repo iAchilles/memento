@@ -43,17 +43,22 @@ export class KnowledgeGraphManager {
     async createEntities(entities) {
         const created = [];
         for (const e of entities) {
-            const res = await this.#db.run(
-                "INSERT OR IGNORE INTO entities(name, entityType) VALUES(?, ?)",
-                [ e.name, e.entityType ]
+            // Проверяем, существует ли уже сущность
+            const existing = await this.#db.get(
+                "SELECT id FROM entities WHERE name = ?",
+                [e.name]
             );
-
-            if (res.changes) {
+            
+            if (!existing) {
+                const res = await this.#db.run(
+                    "INSERT INTO entities(name, entityType) VALUES(?, ?)",
+                    [e.name, e.entityType]
+                );
                 created.push(e);
             }
-
+            
             if (e.observations?.length) {
-                await this.addObservations([ { entityName: e.name, contents: e.observations } ]);
+                await this.addObservations([{ entityName: e.name, contents: e.observations }]);
             }
         }
 
@@ -83,32 +88,29 @@ export class KnowledgeGraphManager {
             }
 
             if (newTexts.length) {
-                const vecs      = await this.embedTexts(newTexts);
-                const insertVec = await this.#db.prepare(
-                    "INSERT INTO obs_vec(entity_id, embedding) VALUES(?, ?)"
-                );
+                const vecs = await this.embedTexts(newTexts);
+                
                 await this.#db.exec("BEGIN TRANSACTION");
-                for (const v of vecs) {
-                    await insertVec.run(eid, v);
-                }
-                await this.#db.exec("COMMIT");
-                await insertVec.finalize();
-
-                const insertFts = await this.#db.prepare(
-                    "INSERT INTO obs_fts(content, entity_id) VALUES(?, ?)"
-                );
-
-                for (const t of newTexts) {
-                    const obsRow = await this.#db.get(
-                        "SELECT id FROM observations WHERE entity_id = ? AND content = ?",
-                        [eid, t]
-                    );
-                    if (obsRow) {
-                        await insertFts.run(obsRow.id, t, eid);
+                try {
+                    for (let i = 0; i < newTexts.length; i++) {
+                        const obsRow = await this.#db.get(
+                            "SELECT id FROM observations WHERE entity_id = ? AND content = ?",
+                            [eid, newTexts[i]]
+                        );
+                        
+                        if (obsRow && vecs[i]) {
+                            await this.#db.run(
+                                "INSERT INTO obs_vec VALUES(?, ?, ?)",
+                                [obsRow.id, eid, vecs[i]]
+                            );
+                        }
                     }
+                    await this.#db.exec("COMMIT");
+                } catch (error) {
+                    await this.#db.exec("ROLLBACK");
+                    console.error("Ошибка при вставке векторов:", error.message);
+                    throw error;
                 }
-
-                await insertFts.finalize();
             }
 
             results.push({ entityName, addedObservations: newTexts });
