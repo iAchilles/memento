@@ -43,7 +43,6 @@ export class KnowledgeGraphManager {
     async createEntities(entities) {
         const created = [];
         for (const e of entities) {
-            // Проверяем, существует ли уже сущность
             const existing = await this.#db.get(
                 "SELECT id FROM entities WHERE name = ?",
                 [e.name]
