@@ -6,7 +6,7 @@ A local, fully-offline MCP memory server using SQLite + FTS5 + `sqlite-vec` with
 
 - Fast keyword search (FTS5)
 - Semantic vector search (sqlite-vec, 768d)
-- Offline embedding model (`bge-small-en-v1.5`)
+- Offline embedding model (`bge-m3`)
 - Structured graph of `entities`, `observations`, and `relations`
 - Easy integration with Claude Desktop (via MCP)
 
@@ -73,7 +73,7 @@ This server exposes the following MCP tools:
 
 ## Embedding Model
 
-This project uses [@xenova/transformers](https://www.npmjs.com/package/@xenova/transformers), with a quantized version of `bge-small-en-v1.5`, running fully offline in Node.js.
+This project uses [@xenova/transformers](https://www.npmjs.com/package/@xenova/transformers), with a quantized version of `bge-m3`, running fully offline in Node.js.
 
 ## License
 

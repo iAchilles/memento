@@ -423,9 +423,9 @@ export class KnowledgeGraphManager {
      */
     async embedTexts(textArr) {
         if (!this.#embedder) {
-            this.#embedder = await pipeline(
+        this.#embedder = await pipeline(
                 "feature-extraction",
-                "Xenova/bge-small-en-v1.5",
+                "Xenova/bge-m3",
                 { quantized: true }
             );
         }
