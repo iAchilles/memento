@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { DbManager } from './src/db-manager.js';
 import { KnowledgeGraphManager } from './src/knowledge-graph-manager.js';
 import { Server } from './src/server.js';
