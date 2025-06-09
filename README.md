@@ -6,7 +6,7 @@ A local, fully-offline MCP memory server using SQLite + FTS5 + `sqlite-vec` with
 ## Features
 
 - Fast keyword search (FTS5)
-- Semantic vector search (sqlite-vec, 768d)
+- Semantic vector search (sqlite-vec, 1024d)
 - Offline embedding model (`bge-m3`)
 - Structured graph of `entities`, `observations`, and `relations`
 - Easy integration with Claude Desktop (via MCP)
