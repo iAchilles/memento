@@ -1,8 +1,12 @@
 {
   "name": "@iachilles/memento",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MCP memory server using SQLite + FTS5 + sqlite-vec",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iAchilles/memento"
+  },
   "bin": {
     "memento": "index.js"
   },
