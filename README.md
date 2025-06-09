@@ -42,8 +42,12 @@ npm i sqlite-vec
 ## Usage
 
 ```bash
-MEMORY_DB_PATH=/path/to/memory.db node memento
+MEMORY_DB_PATH="/Your/Path/To/memory.db" memento
+
+## Starting @iachilles/memento v0.3.3...
+## @iachilles/memento v0.3.3 is ready!
 ```
+
 
 Claude Desktop:
 
