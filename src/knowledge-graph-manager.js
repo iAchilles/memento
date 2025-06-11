@@ -107,7 +107,7 @@ export class KnowledgeGraphManager {
                     await this.#db.exec("COMMIT");
                 } catch (error) {
                     await this.#db.exec("ROLLBACK");
-                    console.error("Ошибка при вставке векторов:", error.message);
+                    console.error("Error inserting vectors:", error.message);
                     throw error;
                 }
             }

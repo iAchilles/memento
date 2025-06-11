@@ -1,8 +1,7 @@
 # Memento
 ***Some memories are best persisted.***
 
-A local, fully-offline MCP memory server using SQLite + FTS5 + `sqlite-vec` with embedding support via [@xenova/transformers](https://www.npmjs.com/package/@xenova/transformers).
-
+Provides persistent memory capabilities through a SQLite-based knowledge graph that stores entities, observations, and relationships with full-text and semantic search using BGE-M3 embeddings for intelligent context retrieval across conversations.
 ## Features
 
 - Fast keyword search (FTS5)
