@@ -15,7 +15,7 @@ Provides persistent memory capabilities through a SQLite-based knowledge graph t
 Most macOS and Linux distros ship `sqlite3` out of the box, but double-check that it’s there and new enough (≥ 3.38 for proper FTS5).
 
 ```bash
-sqlite3 --version       # should print a version string, e.g. 3.46.0 2024-05-10
+sqlite3 --version       # should print a version string, e.g. 3.46.0
 ```
 
 If you see “command not found” (or your version is older than 3.38), install the CLI:
