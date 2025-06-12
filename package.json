@@ -1,6 +1,6 @@
 {
   "name": "@iachilles/memento",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "MCP memory server using SQLite + FTS5 + sqlite-vec",
   "type": "module",
   "repository": {

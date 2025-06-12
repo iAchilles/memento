@@ -254,14 +254,14 @@ export class KnowledgeGraphManager {
                 `SELECT DISTINCT entity_id 
                  FROM obs_fts 
                  WHERE obs_fts MATCH ?`,
-                [query]
+                [this.#escapeFTSQuery(query)]
             );
             
-            const q = `%${query.toLowerCase()}%`;
+            const q = `%${this.#escapeLikeQuery(query.toLowerCase())}%`;
             const entityRows = await this.#db.all(
                 `SELECT DISTINCT id as entity_id
                  FROM entities
-                 WHERE LOWER(name) LIKE ? OR LOWER(entityType) LIKE ?`,
+                 WHERE LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(entityType) LIKE ? ESCAPE '\\'`,
                 [q, q]
             );
             
@@ -299,7 +299,7 @@ export class KnowledgeGraphManager {
             } else {
                 const ftsRows = await this.#db.all(
                     `SELECT DISTINCT entity_id FROM obs_fts WHERE obs_fts MATCH ?`,
-                    [query]
+                    [this.#escapeFTSQuery(query)]
                 );
                 
                 const vecRows = await this.#db.all(
@@ -435,6 +435,27 @@ export class KnowledgeGraphManager {
         }
 
         return outs;
+    }
+
+    /**
+     * Escapes LIKE query string to prevent wildcard injection.
+     * Escapes %, _, and \ characters which have special meaning in LIKE.
+     * @param {string} query - Raw search query
+     * @returns {string} Safely escaped LIKE query
+     */
+    #escapeLikeQuery(query) {
+        return query.replace(/[\\%_]/g, '\\$&');
+    }
+
+    /**
+     * Escapes FTS5 query string to prevent SQL injection.
+     * Wraps the query in double quotes and escapes internal quotes.
+     * @param {string} query - Raw search query
+     * @returns {string} Safely escaped FTS5 query
+     */
+    #escapeFTSQuery(query) {
+        const escaped = query.replace(/"/g, '""');
+        return `"${escaped}"`;
     }
 
     /**
