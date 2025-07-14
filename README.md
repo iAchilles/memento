@@ -20,9 +20,10 @@ Memento requires SQLite 3.38+ for FTS5 support. Most macOS and Linux distros shi
 sqlite3 --version       # should print a version string, e.g. 3.46.0
 ```
 
-**Important Note:** This check is just to verify SQLite is installed on your system. Memento does NOT use the sqlite3 CLI for its operation - it uses the Node.js sqlite3 module internally.
+**Important Note:** This check is just to verify SQLite is installed on your system. Memento does NOT use the sqlite3 CLI for its operation it uses the Node.js sqlite3 module internally.
 
 If you see "command not found" (or your version is older than 3.38), install SQLite:
+
 | Platform             | Install command                               |
 | -------------------- | --------------------------------------------- |
 | **macOS (Homebrew)** | `brew install sqlite`                         |
@@ -35,11 +36,7 @@ If you see "command not found" (or your version is older than 3.38), install SQL
 npm install -g @iachilles/memento
 ```
 
-Make sure the platform-specific `sqlite-vec` subpackage is installed automatically (e.g. `sqlite-vec-darwin-x64`). You can verify or force install via:
-
-```bash
-npm i sqlite-vec
-```
+This will automatically install all dependencies, including the platform-specific sqlite-vec extension.
 
 ## Usage
 
@@ -83,7 +80,7 @@ Claude Desktop:
 Common misconceptions:
 - ❌ Creating shell aliases for sqlite3 CLI won't affect Memento
 - ❌ Loading extensions in sqlite3 CLI won't help Memento
-- ✅ Use the npm-installed sqlite-vec or set `SQLITE_VEC_PATH` environment variable
+- ✅ Use the npm-installed sqlite-vec or set `SQLITE_VEC_PATH` environment variable if automatic detection fails. This should point to the Node.js-compatible version of the extension, typically found in your `node_modules` directory.
 
 If automatic vec loading fails:
 ```bash
@@ -94,30 +91,6 @@ find node_modules -name "vec0.so"     # Linux
 # Use it via environment variable
 SQLITE_VEC_PATH="/full/path/to/node_modules/sqlite-vec-darwin-x64/vec0.dylib" memento
 ```
-
-### Database Lock Issues
-
-If you experience database lock issues:
-
-```bash
-# Check if any process is using the database
-lsof | grep memory.db
-
-# Verify file permissions
-ls -la /path/to/your/memory.db
-
-# Test with a fresh database
-MEMORY_DB_PATH="/tmp/test_memory.db" memento
-```
-
-Common causes:
-- Another process holding the database lock
-- Permission issues with the database file
-- Incompatible sqlite-vec extension versions (e.g., mixing Python and Node.js versions)
-
-### Optional:
-
-Use `SQLITE_VEC_PATH=/full/path/to/vec0.dylib` if automatic detection fails. This should point to the Node.js-compatible version of the extension, typically found in your `node_modules` directory.
 
 ## API Overview
 
