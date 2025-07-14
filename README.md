@@ -10,15 +10,19 @@ Provides persistent memory capabilities through a SQLite-based knowledge graph t
 - Structured graph of `entities`, `observations`, and `relations`
 - Easy integration with Claude Desktop (via MCP)
 
-## Prerequisite: `sqlite3` CLI
+## Prerequisites
 
-Most macOS and Linux distros ship `sqlite3` out of the box, but double-check that it’s there and new enough (≥ 3.38 for proper FTS5).
+### System SQLite Version Check
+
+Memento requires SQLite 3.38+ for FTS5 support. Most macOS and Linux distros ship `sqlite3` out of the box, but double-check that it's there and new enough:
 
 ```bash
 sqlite3 --version       # should print a version string, e.g. 3.46.0
 ```
 
-If you see “command not found” (or your version is older than 3.38), install the CLI:
+**Important Note:** This check is just to verify SQLite is installed on your system. Memento does NOT use the sqlite3 CLI for its operation it uses the Node.js sqlite3 module internally.
+
+If you see "command not found" (or your version is older than 3.38), install SQLite:
 
 | Platform             | Install command                               |
 | -------------------- | --------------------------------------------- |
@@ -32,11 +36,7 @@ If you see “command not found” (or your version is older than 3.38), install
 npm install -g @iachilles/memento
 ```
 
-Make sure the platform-specific `sqlite-vec` subpackage is installed automatically (e.g. `sqlite-vec-darwin-x64`). You can verify or force install via:
-
-```bash
-npm i sqlite-vec
-```
+This will automatically install all dependencies, including the platform-specific sqlite-vec extension.
 
 ## Usage
 
@@ -46,7 +46,6 @@ MEMORY_DB_PATH="/Your/Path/To/memory.db" memento
 ## Starting @iachilles/memento v0.3.3...
 ## @iachilles/memento v0.3.3 is ready!
 ```
-
 
 Claude Desktop:
 
@@ -72,15 +71,30 @@ Claude Desktop:
 }
 ```
 
+## Troubleshooting
 
-### Optional:
+### sqlite-vec Extension Issues
 
-Use `SQLITE_VEC_PATH=/full/path/to/vec0.dylib` if automatic detection fails.
+**Important:** Memento loads the sqlite-vec extension programmatically through Node.js, NOT through the sqlite3 CLI.
+
+Common misconceptions:
+- ❌ Creating shell aliases for sqlite3 CLI won't affect Memento
+- ❌ Loading extensions in sqlite3 CLI won't help Memento
+- ✅ Use the npm-installed sqlite-vec or set `SQLITE_VEC_PATH` environment variable if automatic detection fails. This should point to the Node.js-compatible version of the extension, typically found in your `node_modules` directory.
+
+If automatic vec loading fails:
+```bash
+# Find the Node.js-compatible vec extension
+find node_modules -name "vec0.dylib"  # macOS
+find node_modules -name "vec0.so"     # Linux
+
+# Use it via environment variable
+SQLITE_VEC_PATH="/full/path/to/node_modules/sqlite-vec-darwin-x64/vec0.dylib" memento
+```
 
 ## API Overview
 
 This server exposes the following MCP tools:
-
 - `create_entities`
 - `create_relations`
 - `add_observations`
@@ -108,11 +122,10 @@ All memory, context, reasoning, and decision-making are focused on supporting **
 
 * At the start of each session, retrieve relevant information from memory by saying only:
   `Remembering...`
-* "Memory" refers to the assistant’s internal knowledge graph built from prior interactions.
+* "Memory" refers to the assistant's internal knowledge graph built from prior interactions.
 
 ### 3. Memory Focus Areas
-
-During interaction, prioritize capturing and updating memory related to the user’s technical and creative work, including:
+During interaction, prioritize capturing and updating memory related to the user's technical and creative work, including:
 
 #### a) **Project Architecture**
 
@@ -143,7 +156,6 @@ During interaction, prioritize capturing and updating memory related to the user
 * Collaboration style (e.g., iterative, detail-oriented)
 * Preferred formats and workflows
 * Communication tone and instruction parsing approach
-
 #### f) **Personal Context (secondary)**
 
 * In addition to technical details, the assistant may store helpful contextual cues (e.g., time zone, preferred language, productivity patterns) to improve collaboration and anticipation of needs.
@@ -173,7 +185,6 @@ When the user refers to:
 * a past decision or event
 
 ...the assistant should **automatically retrieve and apply memory** before responding.
-
 ### Recommended Entity Naming Structure
 
 To keep memory organized and searchable, use a consistent naming convention for entities:
