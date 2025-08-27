@@ -16,6 +16,87 @@
  */
 
 /**
+ * @typedef {Object} ScoringWeights
+ * @property {number} temporal - Weight for temporal score (default: 0.4)
+ * @property {number} popularity - Weight for popularity score (default: 0.2)
+ * @property {number} contextual - Weight for contextual score (default: 0.2)
+ * @property {number} importance - Weight for importance score (default: 0.2)
+ */
+
+/**
+ * @typedef {Object} TemporalConfig
+ * @property {number} halfLifeDays - Days for score to decay by 50% (default: 30)
+ * @property {number} recencyThreshold - Days to consider as "recent" (default: 7)
+ * @property {number} recencyBoost - Boost multiplier for recent items (default: 1.2)
+ */
+
+/**
+ * @typedef {Object} PopularityConfig
+ * @property {number} scaleFactor - Scaling factor for logarithmic growth (default: 0.1)
+ * @property {number} baseScore - Base score before access count (default: 1.0)
+ */
+
+/**
+ * @typedef {Object} ContextualConfig
+ * @property {number} maxDistance - Maximum graph distance to consider (default: 3)
+ * @property {number} nearWeight - Weight for directly connected nodes (default: 1.5)
+ * @property {number} decayRate - Decay rate per distance unit (default: 0.2)
+ */
+
+/**
+ * @typedef {Object} ScoringConfig
+ * @property {ScoringWeights} weights - Weight distribution for final score
+ * @property {TemporalConfig} temporal - Temporal decay parameters
+ * @property {PopularityConfig} popularity - Popularity parameters
+ * @property {ContextualConfig} contextual - Contextual relevance parameters
+ */
+
+/**
+ * @typedef {Object} ScoreComponents
+ * @property {number} temporal - Temporal score component
+ * @property {number} popularity - Popularity score component
+ * @property {number} contextual - Contextual score component
+ * @property {number} importance - Importance score component
+ */
+
+/**
+ * @typedef {Object} ScoreResult
+ * @property {number} finalScore - Combined final score
+ * @property {ScoreComponents} components - Individual score components
+ */
+
+/**
+ * @typedef {Object} ScoringEntity
+ * @property {string|Date} createdAt - Creation timestamp
+ * @property {string|Date|null} lastAccessed - Last access timestamp
+ * @property {number} accessCount - Number of accesses
+ * @property {string|null} importance - Importance level
+ */
+
+/**
+ * @typedef {Object} SearchResult
+ * @property {string} [entity_id] - Entity ID
+ * @property {string} [id] - Alternative entity ID field
+ * @property {Array<string>} [searchMethods] - Methods that found this result
+ * @property {number} [keywordRank] - Rank in keyword results
+ * @property {number} [semanticRank] - Rank in semantic results
+ * @property {number} [hybridBoost] - Boost for appearing in both searches
+ */
+
+/**
+ * @typedef {Object} ContextInfo
+ * @property {Array<number>} [contextDistances] - Graph distances for context scoring
+ */
+
+/**
+ * @typedef {Object} CustomConfig
+ * @property {Partial<ScoringWeights>} [weights] - Custom weights
+ * @property {Partial<TemporalConfig>} [temporal] - Custom temporal config
+ * @property {Partial<PopularityConfig>} [popularity] - Custom popularity config
+ * @property {Partial<ContextualConfig>} [contextual] - Custom contextual config
+ */
+
+/**
  * Enumeration of importance levels.
  * @type {ImportanceLevelEnum}
  * @const
@@ -42,7 +123,7 @@ export const IMPORTANCE_WEIGHTS = {
 
 /**
  * Default scoring configuration.
- * @const {Object}
+ * @const {ScoringConfig}
  */
 export const DEFAULT_SCORING_CONFIG = {
     // Weight distribution for final score calculation
@@ -77,7 +158,7 @@ export const DEFAULT_SCORING_CONFIG = {
  *
  * @param {string|Date} createdAt - Creation timestamp
  * @param {string|Date|null} lastAccessed - Last access timestamp
- * @param {Object} [config=DEFAULT_SCORING_CONFIG.temporal] - Temporal scoring configuration
+ * @param {TemporalConfig} [config=DEFAULT_SCORING_CONFIG.temporal] - Temporal scoring configuration
  * @returns {number} Temporal score between 0 and 1.2 (with boost)
  *
  * @example
@@ -92,7 +173,6 @@ export function getTemporalScore(createdAt, lastAccessed, config = DEFAULT_SCORI
     const created = new Date(createdAt);
     const accessed = lastAccessed ? new Date(lastAccessed) : created;
 
-    // Use the most recent of creation or last access
     const relevantDate = accessed > created ? accessed : created;
     const ageInDays = (now - relevantDate) / (1000 * 60 * 60 * 24);
 
@@ -115,7 +195,7 @@ export function getTemporalScore(createdAt, lastAccessed, config = DEFAULT_SCORI
  * Uses logarithmic scaling to prevent runaway scores.
  *
  * @param {number} accessCount - Number of times the entity has been accessed
- * @param {Object} [config=DEFAULT_SCORING_CONFIG.popularity] - Popularity scoring configuration
+ * @param {PopularityConfig} [config=DEFAULT_SCORING_CONFIG.popularity] - Popularity scoring configuration
  * @returns {number} Popularity score, typically between 1.0 and 2.0
  *
  * @example
@@ -141,7 +221,7 @@ export function getPopularityScore(accessCount, config = DEFAULT_SCORING_CONFIG.
  * Closer entities in the knowledge graph get higher scores.
  *
  * @param {number} distance - Shortest path distance in the graph (0 = same entity, 1 = direct relation)
- * @param {Object} [config=DEFAULT_SCORING_CONFIG.contextual] - Contextual scoring configuration
+ * @param {ContextualConfig} [config=DEFAULT_SCORING_CONFIG.contextual] - Contextual scoring configuration
  * @returns {number} Contextual score between 0.5 and 1.5
  *
  * @example
@@ -191,14 +271,10 @@ export function getImportanceScore(importance) {
  * Calculate combined relevance score for an entity.
  * Combines temporal, popularity, contextual, and importance factors.
  *
- * @param {Object} entity - Entity with scoring attributes
- * @param {string|Date} entity.createdAt - Creation timestamp
- * @param {string|Date|null} entity.lastAccessed - Last access timestamp
- * @param {number} entity.accessCount - Number of accesses
- * @param {string|null} entity.importance - Importance level
+ * @param {ScoringEntity} entity - Entity with scoring attributes
  * @param {number|null} [contextDistance=null] - Distance from context entities
- * @param {Object} [config=DEFAULT_SCORING_CONFIG] - Scoring configuration
- * @returns {Object} Score object with finalScore and component scores
+ * @param {ScoringConfig} [config=DEFAULT_SCORING_CONFIG] - Scoring configuration
+ * @returns {ScoreResult} Score object with finalScore and component scores
  *
  * @example
  * const score = calculateRelevanceScore({
@@ -306,12 +382,11 @@ export function normalizeScores(scores) {
  * Merge and re-score results from different search methods.
  * Combines keyword and semantic search results with proper deduplication.
  *
- * @param {Array<Object>} keywordResults - Results from keyword search
- * @param {Array<Object>} semanticResults - Results from semantic search
- * @param {Object} contextInfo - Context information for scoring
- * @param {Array<number>} contextInfo.contextDistances - Graph distances for context scoring
- * @param {Object} [config=DEFAULT_SCORING_CONFIG] - Scoring configuration
- * @returns {Array<Object>} Merged and scored results
+ * @param {Array<SearchResult>} keywordResults - Results from keyword search
+ * @param {Array<SearchResult>} semanticResults - Results from semantic search
+ * @param {ContextInfo} contextInfo - Context information for scoring
+ * @param {ScoringConfig} [config=DEFAULT_SCORING_CONFIG] - Scoring configuration
+ * @returns {Array<SearchResult>} Merged and scored results
  *
  * @example
  * const merged = mergeAndScoreResults(
@@ -356,8 +431,8 @@ export function mergeAndScoreResults(keywordResults, semanticResults, contextInf
 /**
  * Create a custom scoring configuration by merging with defaults.
  *
- * @param {Object} customConfig - Custom configuration to merge
- * @returns {Object} Merged configuration
+ * @param {CustomConfig} customConfig - Custom configuration to merge
+ * @returns {ScoringConfig} Merged configuration
  *
  * @example
  * const config = createScoringConfig({
@@ -377,7 +452,7 @@ export function createScoringConfig(customConfig = {}) {
 /**
  * Format score components for debugging or logging.
  *
- * @param {Object} scoreData - Score data from calculateRelevanceScore
+ * @param {ScoreResult} scoreData - Score data from calculateRelevanceScore
  * @returns {string} Formatted string representation
  *
  * @example
