@@ -169,9 +169,27 @@ export const DEFAULT_SCORING_CONFIG = {
  * getTemporalScore('2025-07-16', '2025-07-20') // ~0.5
  */
 export function getTemporalScore(createdAt, lastAccessed, config = DEFAULT_SCORING_CONFIG.temporal) {
+    // Handle null/undefined values - return base score
+    if (!createdAt) {
+        return 1.0;
+    }
+    
     const now = new Date();
     const created = new Date(createdAt);
+    
+    // Check for invalid dates
+    if (isNaN(created.getTime())) {
+        return 1.0;
+    }
+    
     const accessed = lastAccessed ? new Date(lastAccessed) : created;
+    
+    // Check for invalid accessed date
+    if (isNaN(accessed.getTime())) {
+        const ageInDays = (now - created) / (1000 * 60 * 60 * 24);
+        const decayFactor = Math.exp(-0.693 * ageInDays / config.halfLifeDays);
+        return decayFactor;
+    }
 
     const relevantDate = accessed > created ? accessed : created;
     const ageInDays = (now - relevantDate) / (1000 * 60 * 60 * 24);
@@ -205,7 +223,8 @@ export function getTemporalScore(createdAt, lastAccessed, config = DEFAULT_SCORI
  * getPopularityScore(1000) // ~1.3
  */
 export function getPopularityScore(accessCount, config = DEFAULT_SCORING_CONFIG.popularity) {
-    if (accessCount <= 0) {
+    // Handle null/undefined/invalid values
+    if (accessCount === null || accessCount === undefined || accessCount <= 0) {
         return config.baseScore;
     }
 

@@ -349,13 +349,13 @@ export class ContextManager {
             
             const placeholders = currentLevel.map(() => '?').join(',');
             const query = `
-                SELECT DISTINCT source_entity_id, target_entity_id 
+                SELECT DISTINCT from_id, to_id 
                 FROM relations 
-                WHERE source_entity_id IN (${placeholders})
-                   OR target_entity_id IN (${placeholders})
+                WHERE from_id IN (${placeholders})
+                   OR to_id IN (${placeholders})
             `;
 
-            /** @type {{source_entity_id: any, target_entity_id: any}[]} */
+            /** @type {{from_id: any, to_id: any}[]} */
             const relations = await this.#db.all(query, [...currentLevel, ...currentLevel]);
             const adjacencyMap = new Map();
             
@@ -366,8 +366,8 @@ export class ContextManager {
             }
             
             for (const rel of relations) {
-                const sourceId = rel.source_entity_id.toString();
-                const targetId = rel.target_entity_id.toString();
+                const sourceId = rel.from_id.toString();
+                const targetId = rel.to_id.toString();
                 
                 if (!adjacencyMap.has(sourceId)) {
                     adjacencyMap.set(sourceId, new Set());
@@ -506,13 +506,13 @@ export class ContextManager {
                 
                 if (!connections) {
                     const query = `
-                        SELECT DISTINCT target_entity_id as connected
+                        SELECT DISTINCT to_id as connected
                         FROM relations 
-                        WHERE source_entity_id = ?
+                        WHERE from_id = ?
                         UNION
-                        SELECT DISTINCT source_entity_id as connected
+                        SELECT DISTINCT from_id as connected
                         FROM relations 
-                        WHERE target_entity_id = ?
+                        WHERE to_id = ?
                     `;
                     
                     const rows = await this.#db.all(query, [entityId, entityId]);
