@@ -221,5 +221,49 @@ export class Server extends McpServer {
                 }]
             })
         );
+
+        // Tool: set_importance
+        this.tool(
+            'set_importance',
+            'Set the importance level for an entity (critical, important, normal, temporary, deprecated).',
+            {
+                entityName: z.string().describe('Name of the entity.'),
+                importance: z.enum(['critical', 'important', 'normal', 'temporary', 'deprecated'])
+                    .describe('Importance level for the entity.')
+            },
+            async ({ entityName, importance }) => ({
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify(
+                        await this.#knowledgeGraphManager.setImportance(entityName, importance),
+                        null,
+                        2
+                    )
+                }]
+            })
+        );
+
+        // Tool: add_tags
+        this.tool(
+            'add_tags',
+            'Add tags to an entity for better categorization and searchability.',
+            {
+                entityName: z.string().describe('Name of the entity.'),
+                tags: z.union([
+                    z.array(z.string()),
+                    z.string()
+                ]).describe('Tags to add (string or array of strings).')
+            },
+            async ({ entityName, tags }) => ({
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify(
+                        await this.#knowledgeGraphManager.addTags(entityName, tags),
+                        null,
+                        2
+                    )
+                }]
+            })
+        );
     }
 }

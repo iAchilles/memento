@@ -584,4 +584,80 @@ export class KnowledgeGraphManager {
 
         return null;
     }
+
+    /**
+     * Sets the importance level for an entity.
+     * 
+     * @param {string} entityName - Name of the entity
+     * @param {string} importance - Importance level ('critical', 'important', 'normal', 'temporary', 'deprecated')
+     * @returns {Promise<Object>} Result with success status
+     * 
+     * @example
+     * await kgm.setImportance('Project_MEMENTO', 'critical');
+     */
+    async setImportance(entityName, importance) {
+        try {
+            const entityId = await this.getEntityId(entityName, null, false);
+            if (!entityId) {
+                return {
+                    success: false,
+                    error: `Entity "${entityName}" not found`
+                };
+            }
+
+            const success = await this.#searchContextManager.setImportance(entityId, importance);
+            
+            return {
+                success,
+                entityName,
+                importance,
+                message: success ? 
+                    `Importance set to '${importance}' for entity '${entityName}'` :
+                    `Failed to set importance for entity '${entityName}'`
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Adds tags to an entity.
+     * 
+     * @param {string} entityName - Name of the entity
+     * @param {Array<string>|string} tags - Tags to add
+     * @returns {Promise<Object>} Result with success status
+     * 
+     * @example
+     * await kgm.addTags('Session_2025-08-29', ['completed', 'phase5']);
+     */
+    async addTags(entityName, tags) {
+        try {
+            const entityId = await this.getEntityId(entityName, null, false);
+            if (!entityId) {
+                return {
+                    success: false,
+                    error: `Entity "${entityName}" not found`
+                };
+            }
+
+            const success = await this.#searchContextManager.addTags(entityId, tags);
+            
+            return {
+                success,
+                entityName,
+                tags: Array.isArray(tags) ? tags : [tags],
+                message: success ? 
+                    `Tags added to entity '${entityName}'` :
+                    `Failed to add tags to entity '${entityName}'`
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
 }
