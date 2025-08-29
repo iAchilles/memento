@@ -61,48 +61,45 @@ export class MigrationManager {
      * @returns {Promise<void>}
      */
     async migrate(migrations, targetVersion = null, silent = false) {
-        const currentVersion = await this.getCurrentVersion();
-        const target = targetVersion || Math.max(...migrations.map(m => m.version));
-        const sortedMigrations = migrations.sort((a, b) => a.version - b.version);
-        
-        for (const migration of sortedMigrations) {
-            if (migration.version > currentVersion && migration.version <= target) {
-                if (!silent) {
-                    console.error(`Applying migration ${migration.version}: ${migration.description}`);
-                }
-                
-                await this.#db.exec("BEGIN TRANSACTION");
-                try {
-                    await migration.up(this.#db, silent);  // Pass silent flag to migration
+        await this.#db.exec("PRAGMA busy_timeout=5000;");
+        await this.#db.exec("BEGIN IMMEDIATE TRANSACTION");
+
+        try {
+            const currentVersion = await this.getCurrentVersion();
+            const target = targetVersion || Math.max(...migrations.map(m => m.version));
+            const sorted = [...migrations].sort((a, b) => a.version - b.version);
+
+            let applied = 0;
+
+            for (const migration of sorted) {
+                if (migration.version > currentVersion && migration.version <= target) {
+                    if (!silent) console.error(`Applying migration ${migration.version}: ${migration.description}`);
+
+                    await migration.up(this.#db, silent);
                     await this.#db.run(
                         "INSERT INTO migrations (version, description) VALUES (?, ?)",
                         [migration.version, migration.description]
                     );
-                    
-                    await this.#db.exec("COMMIT");
-                    if (!silent) {
-                        console.error(`✓ Migration ${migration.version} applied successfully`);
-                    }
-                } catch (error) {
-                    await this.#db.exec("ROLLBACK");
-                    if (!silent) {
-                        console.error(`✗ Migration ${migration.version} failed:`, error.message);
-                    }
 
-                    throw error;
+                    if (!silent) console.error(`✓ Migration ${migration.version} applied successfully`);
+                    applied++;
                 }
             }
-        }
-        
 
-        if (!silent) {
-            const newVersion = await this.getCurrentVersion();
+            await this.#db.exec("COMMIT");
 
-            if (newVersion === currentVersion) {
-                console.error("Database is already up to date");
-            } else {
-                console.error(`Database migrated from version ${currentVersion} to ${newVersion}`);
+            if (!silent) {
+                if (applied === 0) {
+                    console.error("Database is already up to date");
+                } else {
+                    const newVersion = await this.getCurrentVersion();
+                    console.error(`Database migrated from version ${currentVersion} to ${newVersion}`);
+                }
             }
+        } catch (error) {
+            await this.#db.exec("ROLLBACK");
+            if (!silent) console.error("Migration failed:", error.message);
+            throw error;
         }
     }
 
