@@ -11,7 +11,9 @@
     "memento": "index.js"
   },
   "files": [
-    "src/"
+    "src/",
+    "migrations/",
+    "cli/"
   ],
   "keywords": [
     "mcp",
@@ -25,6 +27,11 @@
     "node": ">=18"
   },
   "license": "MIT",
+  "scripts": {
+    "migrate": "node cli/migrate.js",
+    "migrate:status": "node cli/migrate.js --status",
+    "migrate:rollback": "node cli/migrate.js --rollback"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@xenova/transformers": "^2.17.2",

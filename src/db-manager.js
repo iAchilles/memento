@@ -10,6 +10,8 @@ import { fileURLToPath } from 'url';
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
 import { getLoadablePath, load as loadSqliteVec } from 'sqlite-vec';
+import { MigrationManager } from './migration-manager.js';
+import { migrations } from '../migrations/index.js';
 
 const DEFAULT_DB_FILENAME = 'memory.db';
 
@@ -21,7 +23,7 @@ export class DbManager {
     /**
      * Absolute path to the SQLite database file.
      * @private
-     * @type {string}
+     * @type {?string}
      */
     #dbPath = null;
 
@@ -82,6 +84,7 @@ export class DbManager {
 
             await this.#createTables();
             await this.#createTriggers();
+            await this.#applyMigrations();
         }
 
         return this.#db;
@@ -153,6 +156,18 @@ BEGIN
     WHERE rowid = new.id;
 END;
         `);
+    }
+
+    /**
+     * Apply database migrations.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async #applyMigrations() {
+        const migrationManager = new MigrationManager(this.#db);
+        await migrationManager.initialize();
+
+        return migrationManager.migrate(migrations, null, true);  // silent=true for MCP compatibility
     }
 
     /**
