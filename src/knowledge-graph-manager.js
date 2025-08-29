@@ -7,6 +7,7 @@
  */
 
 import { pipeline } from '@xenova/transformers';
+import { SearchContextManager } from './search-context-manager.js';
 
 /**
  * Manages a knowledge graph persisted in SQLite.
@@ -25,11 +26,17 @@ export class KnowledgeGraphManager {
     #embedder = null;
 
     /**
+     * @type {SearchContextManager|null}
+     */
+    #searchContextManager = null;
+
+    /**
      * Creates an instance of KnowledgeGraphManager.
      * @param {import('sqlite').Database} db - An opened SQLite database connection.
      */
     constructor(db) {
         this.#db = db;
+        this.#searchContextManager = new SearchContextManager(db);
     }
 
     /**
@@ -239,11 +246,11 @@ export class KnowledgeGraphManager {
 
     /**
      * Searches for entities matching a query, either by keyword or semantically.
-     * @param {{ query: string, mode?: "keyword" | "semantic" | "hybrid", topK?: number, threshold?: number }}
+     * @param {{ query: string, mode?: "keyword" | "semantic" | "hybrid", topK?: number, threshold?: number, includeScoreDetails?: boolean }}
      *   Search options.
-     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[] }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
+     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[], score?: number, scoreComponents?: Object }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
      */
-    async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35 }) {
+    async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35, includeScoreDetails = false }) {
         let adjustedThreshold = threshold;
         if (mode === "semantic" || mode === "hybrid") {
             adjustedThreshold = 2 * (1 - threshold);
@@ -274,13 +281,8 @@ export class KnowledgeGraphManager {
                 return { entities: [], relations: [] };
             }
             
-            const placeholders = allIds.map(() => "?").join(",");
-            const entities = await this.#db.all(
-                `SELECT name FROM entities WHERE id IN (${placeholders})`,
-                allIds
-            );
             
-            return this.openNodes(entities.map(e => e.name));
+            return this.#applyScoring(allIds, query, includeScoreDetails);
         }
         
         try {
@@ -344,13 +346,8 @@ export class KnowledgeGraphManager {
                 return { entities: [], relations: [] };
             }
             
-            const placeholders = ids.map(() => "?").join(",");
-            const entities = await this.#db.all(
-                `SELECT name FROM entities WHERE id IN (${placeholders})`,
-                ids
-            );
             
-            return this.openNodes(entities.map(e => e.name));
+            return this.#applyScoring(ids, query, includeScoreDetails);
             
         } catch (error) {
             console.error(`Search error in ${mode} mode:`, error.message);
@@ -456,6 +453,89 @@ export class KnowledgeGraphManager {
     #escapeFTSQuery(query) {
         const escaped = query.replace(/"/g, '""');
         return `"${escaped}"`;
+    }
+
+    /**
+     * Applies relevance scoring to search results and formats output
+     * @private
+     * @param {number[]} entityIds - Array of entity IDs from search
+     * @param {string} query - Original search query
+     * @param {boolean} includeScoreDetails - Whether to include score components
+     * @returns {Promise<{ entities: Array, relations: Array }>}
+     */
+    async #applyScoring(entityIds, query, includeScoreDetails = false) {
+        if (!entityIds || entityIds.length === 0) {
+            return { entities: [], relations: [] };
+        }
+
+        const entityData = await this._performBaseSearch(entityIds);
+        const searchContext = await this.#searchContextManager.prepareSearchContext(query, {
+            contextSize: 5,
+            preloadDepth: 2
+        });
+        const scoredResults = await this.#searchContextManager.scoreSearchResults(
+            entityData,
+            searchContext,
+            { includeComponents: includeScoreDetails }
+        );
+        
+        scoredResults.sort((a, b) => (b.score || 0) - (a.score || 0));
+        const foundIds = scoredResults.map(r => r.entity_id);
+
+        if (foundIds.length > 0) {
+            await this.#searchContextManager.updateAccessStats(foundIds);
+        }
+        
+        const entityNames = scoredResults.map(r => r.name);
+        const fullDetails = await this.openNodes(entityNames);
+        
+        if (includeScoreDetails) {
+            fullDetails.entities = fullDetails.entities.map((entity, idx) => ({
+                ...entity,
+                score: scoredResults[idx].score,
+                scoreComponents: scoredResults[idx].scoreComponents
+            }));
+        }
+        
+        return fullDetails;
+    }
+
+    /**
+     * Performs base search and retrieves entities with metadata for scoring
+     * @private
+     * @param {number[]} entityIds - Array of entity IDs from search
+     * @returns {Promise<Array<{entity_id: number, name: string, entityType: string, created_at: string|null, last_accessed: string|null, access_count: number, importance: string}>>}
+     */
+    async _performBaseSearch(entityIds) {
+        if (!entityIds || entityIds.length === 0) {
+            return [];
+        }
+
+        const placeholders = entityIds.map(() => "?").join(",");
+        const results = await this.#db.all(
+            `SELECT 
+                e.id as entity_id,
+                e.name,
+                e.entityType,
+                MIN(o.created_at) as created_at,
+                MAX(o.last_accessed) as last_accessed,
+                SUM(o.access_count) as access_count,
+                COALESCE(
+                    (SELECT o2.importance 
+                     FROM observations o2 
+                     WHERE o2.entity_id = e.id 
+                     ORDER BY o2.last_accessed DESC 
+                     LIMIT 1),
+                    'normal'
+                ) as importance
+            FROM entities e
+            LEFT JOIN observations o ON o.entity_id = e.id
+            WHERE e.id IN (${placeholders})
+            GROUP BY e.id, e.name, e.entityType`,
+            entityIds
+        );
+
+        return results;
     }
 
     /**
