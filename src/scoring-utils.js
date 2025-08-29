@@ -122,17 +122,49 @@ export const IMPORTANCE_WEIGHTS = {
 };
 
 /**
+ * Predefined scoring profiles for different use cases.
+ * @const {Object<string, ScoringWeights>}
+ */
+export const SCORING_PROFILES = {
+    balanced: {
+        temporal: 0.4,
+        popularity: 0.2,
+        contextual: 0.2,
+        importance: 0.2
+    },
+    recent: {
+        temporal: 0.6,
+        popularity: 0.1,
+        contextual: 0.15,
+        importance: 0.15
+    },
+    important: {
+        temporal: 0.2,
+        popularity: 0.1,
+        contextual: 0.2,
+        importance: 0.5
+    },
+    connected: {
+        temporal: 0.2,
+        popularity: 0.15,
+        contextual: 0.45,
+        importance: 0.2
+    },
+    popular: {
+        temporal: 0.2,
+        popularity: 0.45,
+        contextual: 0.15,
+        importance: 0.2
+    }
+};
+
+/**
  * Default scoring configuration.
  * @const {ScoringConfig}
  */
 export const DEFAULT_SCORING_CONFIG = {
     // Weight distribution for final score calculation
-    weights: {
-        temporal: 0.4,    // 40% - how recent is the information
-        popularity: 0.2,  // 20% - how often it's accessed
-        contextual: 0.2,  // 20% - how related to current context
-        importance: 0.2   // 20% - importance level
-    },
+    weights: SCORING_PROFILES.balanced,
     // Temporal decay parameters
     temporal: {
         halfLifeDays: 30,      // Days for score to decay by 50%
@@ -448,27 +480,6 @@ export function mergeAndScoreResults(keywordResults, semanticResults, contextInf
 }
 
 /**
- * Create a custom scoring configuration by merging with defaults.
- *
- * @param {CustomConfig} customConfig - Custom configuration to merge
- * @returns {ScoringConfig} Merged configuration
- *
- * @example
- * const config = createScoringConfig({
- *     weights: { temporal: 0.5, popularity: 0.2, contextual: 0.2, importance: 0.1 },
- *     temporal: { halfLifeDays: 14 }
- * });
- */
-export function createScoringConfig(customConfig = {}) {
-    return {
-        weights: {...DEFAULT_SCORING_CONFIG.weights, ...customConfig.weights},
-        temporal: {...DEFAULT_SCORING_CONFIG.temporal, ...customConfig.temporal},
-        popularity: {...DEFAULT_SCORING_CONFIG.popularity, ...customConfig.popularity},
-        contextual: {...DEFAULT_SCORING_CONFIG.contextual, ...customConfig.contextual}
-    };
-}
-
-/**
  * Format score components for debugging or logging.
  *
  * @param {ScoreResult} scoreData - Score data from calculateRelevanceScore
@@ -529,10 +540,52 @@ export function getImportanceLevelConstant(value) {
     return null;
 }
 
+/**
+ * Create a scoring configuration with custom weights.
+ * Merges provided weights with defaults.
+ *
+ * @param {string|ScoringWeights} profileOrWeights - Profile name or custom weights
+ * @returns {ScoringConfig} Complete scoring configuration
+ *
+ * @example
+ * // Use predefined profile
+ * const config = createScoringConfig('recent');
+ * 
+ * // Use custom weights
+ * const config = createScoringConfig({
+ *     temporal: 0.5,
+ *     popularity: 0.3,
+ *     contextual: 0.1,
+ *     importance: 0.1
+ * });
+ */
+export function createScoringConfig(profileOrWeights = 'balanced') {
+    let weights;
+    
+    if (typeof profileOrWeights === 'string') {
+        weights = SCORING_PROFILES[profileOrWeights] || SCORING_PROFILES.balanced;
+    } else {
+        weights = { ...SCORING_PROFILES.balanced, ...profileOrWeights };
+    }
+    
+    const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+    if (Math.abs(sum - 1) > 0.01) {
+        for (const key of Object.keys(weights)) {
+            weights[key] = weights[key] / sum;
+        }
+    }
+    
+    return {
+        ...DEFAULT_SCORING_CONFIG,
+        weights
+    };
+}
+
 // Re-export all functions for convenience
 export default {
     ImportanceLevel,
     IMPORTANCE_WEIGHTS,
+    SCORING_PROFILES,
     DEFAULT_SCORING_CONFIG,
     getTemporalScore,
     getPopularityScore,

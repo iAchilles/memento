@@ -436,11 +436,11 @@ export class ContextManager {
      * Update access statistics for entities after a search.
      * Increments access count and updates last_accessed timestamp.
      * 
-     * @param {Array<string>} entityIds - Entity IDs to update
+     * @param {Array<number>} entityIds - Entity IDs to update
      * @returns {Promise<void>}
      * 
      * @example
-     * await contextManager.updateAccessStats(['Entity1', 'Entity2']);
+     * await contextManager.updateAccessStats([1, 2, 3]);
      */
     async updateAccessStats(entityIds) {
         if (!entityIds || entityIds.length === 0) {

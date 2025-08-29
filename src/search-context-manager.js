@@ -6,7 +6,7 @@
  */
 
 import { ContextManager } from './context-manager.js';
-import { calculateRelevanceScore } from './scoring-utils.js';
+import { calculateRelevanceScore, createScoringConfig } from './scoring-utils.js';
 
 /**
  * @typedef {Object} SearchContextOptions
@@ -30,8 +30,8 @@ import { calculateRelevanceScore } from './scoring-utils.js';
 
 /**
  * @typedef {Object} EntityData
- * @property {string} [id] - Entity ID
- * @property {string} [entity_id] - Alternative entity ID field
+ * @property {string|number} [id] - Entity ID
+ * @property {string|number} [entity_id] - Alternative entity ID field
  * @property {string} [name] - Entity name
  * @property {string|Date} [created_at] - Creation timestamp
  * @property {string|Date} [createdAt] - Alternative creation timestamp field
@@ -47,14 +47,15 @@ import { calculateRelevanceScore } from './scoring-utils.js';
  * @property {number} score - Final relevance score
  * @property {Object} [scoreComponents] - Individual score components
  * @property {number|null} contextDistance - Distance from context
- * @property {string} [id] - Entity ID
- * @property {string} [entity_id] - Alternative entity ID field
+ * @property {string|number} [id] - Entity ID
+ * @property {string|number} [entity_id] - Alternative entity ID field
  * @property {string} [name] - Entity name
  */
 
 /**
  * @typedef {Object} ScoringOptions
  * @property {boolean} [includeComponents=false] - Whether to include score components
+ * @property {string|Object} [scoringProfile='balanced'] - Scoring profile name or custom weights
  */
 
 /**
@@ -123,6 +124,9 @@ export class SearchContextManager extends ContextManager {
             return [];
         }
         
+        // Create scoring config from profile or custom weights
+        const scoringConfig = createScoringConfig(options.scoringProfile || 'balanced');
+        
         const entityIds = results.map(r => r.entity_id || r.id);
         const contextDistances = await this.getContextualDistances(
             entityIds,
@@ -142,7 +146,8 @@ export class SearchContextManager extends ContextManager {
                     accessCount: result.access_count || result.accessCount || 0,
                     importance: result.importance
                 },
-                contextDistance
+                contextDistance,
+                scoringConfig  // Pass the custom config
             );
             
             scoredResults.push({

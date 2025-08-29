@@ -2,3 +2,9 @@
 node_modules/
 package-lock.json
 memory.db
+
+# Test files (not for version control)
+calibrate.js
+test-phase*.js
+test-profiles.js
+test-queries*.json

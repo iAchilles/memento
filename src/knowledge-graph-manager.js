@@ -246,11 +246,11 @@ export class KnowledgeGraphManager {
 
     /**
      * Searches for entities matching a query, either by keyword or semantically.
-     * @param {{ query: string, mode?: "keyword" | "semantic" | "hybrid", topK?: number, threshold?: number, includeScoreDetails?: boolean }}
+     * @param {{ query: string, mode?: "keyword" | "semantic" | "hybrid", topK?: number, threshold?: number, includeScoreDetails?: boolean, scoringProfile?: string|Object }}
      *   Search options.
      * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[], score?: number, scoreComponents?: Object }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
      */
-    async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35, includeScoreDetails = false }) {
+    async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35, includeScoreDetails = false, scoringProfile = 'balanced' }) {
         let adjustedThreshold = threshold;
         if (mode === "semantic" || mode === "hybrid") {
             adjustedThreshold = 2 * (1 - threshold);
@@ -282,7 +282,7 @@ export class KnowledgeGraphManager {
             }
             
             
-            return this.#applyScoring(allIds, query, includeScoreDetails);
+            return this.#applyScoring(allIds, query, includeScoreDetails, scoringProfile);
         }
         
         try {
@@ -347,7 +347,7 @@ export class KnowledgeGraphManager {
             }
             
             
-            return this.#applyScoring(ids, query, includeScoreDetails);
+            return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
             
         } catch (error) {
             console.error(`Search error in ${mode} mode:`, error.message);
@@ -461,26 +461,39 @@ export class KnowledgeGraphManager {
      * @param {number[]} entityIds - Array of entity IDs from search
      * @param {string} query - Original search query
      * @param {boolean} includeScoreDetails - Whether to include score components
-     * @returns {Promise<{ entities: Array, relations: Array }>}
+     * @param {string|Object} scoringProfile - Scoring profile name or custom weights
+     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[], score?: number, scoreComponents?: Object }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
      */
-    async #applyScoring(entityIds, query, includeScoreDetails = false) {
+    async #applyScoring(entityIds, query, includeScoreDetails = false, scoringProfile = 'balanced') {
         if (!entityIds || entityIds.length === 0) {
             return { entities: [], relations: [] };
         }
 
         const entityData = await this._performBaseSearch(entityIds);
+        
+        // Convert entity_id from number to string for compatibility
+        const entityDataForScoring = entityData.map(entity => ({
+            ...entity,
+            entity_id: String(entity.entity_id)
+        }));
+        
         const searchContext = await this.#searchContextManager.prepareSearchContext(query, {
             contextSize: 5,
             preloadDepth: 2
         });
         const scoredResults = await this.#searchContextManager.scoreSearchResults(
-            entityData,
+            entityDataForScoring,
             searchContext,
-            { includeComponents: includeScoreDetails }
+            { 
+                includeComponents: includeScoreDetails,
+                scoringProfile: scoringProfile
+            }
         );
         
         scoredResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-        const foundIds = scoredResults.map(r => r.entity_id);
+        
+        // Convert entity_id back to numbers for updateAccessStats
+        const foundIds = scoredResults.map(r => Number(r.entity_id));
 
         if (foundIds.length > 0) {
             await this.#searchContextManager.updateAccessStats(foundIds);
@@ -490,11 +503,17 @@ export class KnowledgeGraphManager {
         const fullDetails = await this.openNodes(entityNames);
         
         if (includeScoreDetails) {
-            fullDetails.entities = fullDetails.entities.map((entity, idx) => ({
+            // Create new array with score details added
+            const entitiesWithScores = fullDetails.entities.map((entity, idx) => ({
                 ...entity,
-                score: scoredResults[idx].score,
-                scoreComponents: scoredResults[idx].scoreComponents
+                score: scoredResults[idx]?.score,
+                scoreComponents: scoredResults[idx]?.scoreComponents
             }));
+            
+            return {
+                entities: entitiesWithScores,
+                relations: fullDetails.relations
+            };
         }
         
         return fullDetails;
