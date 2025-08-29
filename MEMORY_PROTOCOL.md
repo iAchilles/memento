@@ -27,7 +27,7 @@ Use consistent naming for searchability and organization:
 - `Assistant` – assistant metadata or behavior patterns
 - `User` – preferences, context, habits, communication style
 - `Project_[NAME]` – per project (use directory name in CAPS_SNAKE_CASE)
-  - Example: `/Users/igor/memento` → `Project_MEMENTO`
+  - Example: `/Users/memento` → `Project_MEMENTO`
 - `Session_[DATE]` – daily work sessions, e.g., `Session_2025-08-29`
 - `Decision_[TOPIC]` – architectural decisions, e.g., `Decision_RelevanceScoring`
 - `Feature_[NAME]` – feature implementations, e.g., `Feature_EnhancedSearch`
