@@ -40,5 +40,8 @@
     "sqlite-vec": "^0.1.7-alpha.2",
     "sqlite3": "^5.1.7",
     "zod": "^3.25.56"
+  },
+  "devDependencies": {
+    "pg-mem": "^2.6.13"
   }
 }

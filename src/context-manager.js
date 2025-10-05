@@ -211,11 +211,11 @@ const contextCache = {
  */
 export class ContextManager {
     /**
-     * Database connection for querying recent entities.
+     * Repository abstraction for backend access.
      * @private
-     * @type {import('sqlite').Database|null}
+     * @type {import('./graph-repository.js').GraphRepository}
      */
-    #db = null;
+    #repository = null;
 
     /**
      * Graph cache for optimizing traversal operations
@@ -238,10 +238,10 @@ export class ContextManager {
 
     /**
      * Creates a new ContextManager.
-     * @param {import('sqlite').Database} db - Database connection
+     * @param {import('./graph-repository.js').GraphRepository} repository - Repository implementation
      */
-    constructor(db) {
-        this.#db = db;
+    constructor(repository) {
+        this.#repository = repository;
     }
 
     /**
@@ -275,21 +275,7 @@ export class ContextManager {
             return new Map();
         }
         
-        const placeholders = names.map(() => '?').join(',');
-        const query = `
-            SELECT name, id 
-            FROM entities 
-            WHERE name IN (${placeholders})
-        `;
-        
-        const rows = await this.#db.all(query, names);
-        const nameToId = new Map();
-        
-        rows.forEach(row => {
-            nameToId.set(row.name, row.id.toString());
-        });
-        
-        return nameToId;
+        return this.#repository.getEntityIdsByNames(names);
     }
 
     /**
@@ -307,21 +293,7 @@ export class ContextManager {
             return new Map();
         }
         
-        const placeholders = ids.map(() => '?').join(',');
-        const query = `
-            SELECT id, name 
-            FROM entities 
-            WHERE id IN (${placeholders})
-        `;
-        
-        const rows = await this.#db.all(query, ids);
-        const idToName = new Map();
-        
-        rows.forEach(row => {
-            idToName.set(row.id.toString(), row.name);
-        });
-        
-        return idToName;
+        return this.#repository.getEntityNamesByIds(ids);
     }
 
     /**
@@ -347,16 +319,8 @@ export class ContextManager {
             const currentLevel = Array.from(toProcess);
             toProcess.clear();
             
-            const placeholders = currentLevel.map(() => '?').join(',');
-            const query = `
-                SELECT DISTINCT from_id, to_id 
-                FROM relations 
-                WHERE from_id IN (${placeholders})
-                   OR to_id IN (${placeholders})
-            `;
-
             /** @type {{from_id: any, to_id: any}[]} */
-            const relations = await this.#db.all(query, [...currentLevel, ...currentLevel]);
+            const relations = await this.#repository.getRelationsForEntityIds(currentLevel);
             const adjacencyMap = new Map();
             
             for (const entityId of currentLevel) {
@@ -412,19 +376,11 @@ export class ContextManager {
         }
         
         try {
-            const query = `
-                SELECT DISTINCT entity_id 
-                FROM observations 
-                WHERE last_accessed IS NOT NULL 
-                ORDER BY last_accessed DESC 
-                LIMIT ?
-            `;
-            
-            const results = await this.#db.all(query, [Math.min(limit, contextCache.maxRecentEntities)]);
-            
-            contextCache.recentEntities = results.map(r => r.entity_id);
+            const results = await this.#repository.getRecentlyAccessedEntities(Math.min(limit, contextCache.maxRecentEntities));
+
+            contextCache.recentEntities = results;
             contextCache.lastUpdate = Date.now();
-            
+
             return contextCache.recentEntities.slice(0, limit);
 
         } catch (error) {
@@ -448,16 +404,7 @@ export class ContextManager {
         }
         
         try {
-            const placeholders = entityIds.map(() => '?').join(',');
-
-            const updateQuery = `
-                UPDATE observations 
-                SET access_count = COALESCE(access_count, 0) + 1,
-                    last_accessed = datetime('now')
-                WHERE entity_id IN (${placeholders})
-            `;
-            
-            await this.#db.run(updateQuery, entityIds);
+            await this.#repository.updateAccessStats(entityIds);
             contextCache.lastUpdate = null;
         } catch (error) {
             throw error;
@@ -505,19 +452,16 @@ export class ContextManager {
                 let connections = this.#graphCache.getAdjacent(entityId);
                 
                 if (!connections) {
-                    const query = `
-                        SELECT DISTINCT to_id as connected
-                        FROM relations 
-                        WHERE from_id = ?
-                        UNION
-                        SELECT DISTINCT from_id as connected
-                        FROM relations 
-                        WHERE to_id = ?
-                    `;
-                    
-                    const rows = await this.#db.all(query, [entityId, entityId]);
-                    connections = new Set(rows.map(r => r.connected.toString()));
-                    
+                    const rows = await this.#repository.getRelationsForEntityIds([entityId]);
+                    connections = new Set();
+                    for (const row of rows) {
+                        if (row.from_id.toString() === entityId.toString()) {
+                            connections.add(row.to_id.toString());
+                        }
+                        if (row.to_id.toString() === entityId.toString()) {
+                            connections.add(row.from_id.toString());
+                        }
+                    }
                     this.#graphCache.setAdjacent(entityId, connections);
                 }
                 
@@ -654,19 +598,7 @@ export class ContextManager {
             throw new Error(`Invalid importance level: ${importance}. Use ImportanceLevel enum values.`);
         }
         
-        try {
-            const query = `
-                UPDATE observations 
-                SET importance = ?
-                WHERE entity_id = ?
-            `;
-            
-            const result = await this.#db.run(query, [importance, entityId]);
-
-            return result.changes > 0;
-        } catch (error) {
-            return false;
-        }
+        return this.#repository.setImportance(entityId, importance);
     }
     
     /**
@@ -685,32 +617,7 @@ export class ContextManager {
         }
         
         try {
-            const currentQuery = `
-                SELECT id, tags 
-                FROM observations 
-                WHERE entity_id = ? 
-                LIMIT 1
-            `;
-
-            /** @type {{id: number, tags: string}} */
-            const current = await this.#db.get(currentQuery, [entityId]);
-            if (!current) {
-                return false;
-            }
-            
-            const existingTags = current.tags ? JSON.parse(current.tags) : [];
-            const newTags = [...new Set([...existingTags, ...tags])];
-
-            const updateQuery = `
-                UPDATE observations 
-                SET tags = ?
-                WHERE entity_id = ?
-            `;
-            
-            await this.#db.run(updateQuery, [JSON.stringify(newTags), entityId]);
-
-            return true;
-
+            return await this.#repository.addTags(entityId, tags);
         } catch (error) {
             return false;
         }
@@ -797,12 +704,12 @@ let contextManagerInstance = null;
 /**
  * Get or create a ContextManager instance.
  * 
- * @param {import('sqlite').Database} db - Database connection
+ * @param {import('./graph-repository.js').GraphRepository} repository - Repository implementation
  * @returns {ContextManager} Context manager instance
  */
-export function getContextManager(db) {
+export function getContextManager(repository) {
     if (!contextManagerInstance) {
-        contextManagerInstance = new ContextManager(db);
+        contextManagerInstance = new ContextManager(repository);
     }
 
     return contextManagerInstance;

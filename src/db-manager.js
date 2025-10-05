@@ -11,6 +11,8 @@ import { getLoadablePath, load as loadSqliteVec } from 'sqlite-vec';
 import { MigrationManager } from './migration-manager.js';
 import { migrations } from '../migrations/index.js';
 import pg from 'pg';
+import { SqliteGraphRepository } from './sqlite/graph-repo.js';
+import { PostgresGraphRepository } from './postgres/graph-repo.js';
 
 const { Pool } = pg;
 
@@ -42,6 +44,12 @@ export class SqliteDbManager {
      * @type {import('sqlite').Database|null}
      */
     #db = null;
+
+    /**
+     * Cached graph repository instance.
+     * @type {SqliteGraphRepository|null}
+     */
+    #repository = null;
 
     /**
      * Creates a new SqliteDbManager.
@@ -90,6 +98,18 @@ export class SqliteDbManager {
         }
 
         return this.#db;
+    }
+
+    /**
+     * Returns a SQLite graph repository.
+     * @returns {Promise<SqliteGraphRepository>}
+     */
+    async graphRepository() {
+        if (!this.#repository) {
+            const db = await this.db();
+            this.#repository = new SqliteGraphRepository(db);
+        }
+        return this.#repository;
     }
 
     /**
@@ -195,9 +215,15 @@ export class PostgresDbManager {
     /** @type {pg.PoolConfig} */
     #config;
 
+    /** @type {PostgresGraphRepository|null} */
+    #repository = null;
+
     constructor(config = {}) {
         this.#config = this.#sanitizeConfig(config);
     }
+
+    /** @type {boolean} */
+    #vectorSupported = true;
 
     /**
      * Returns an initialized PostgreSQL pool.
@@ -210,6 +236,14 @@ export class PostgresDbManager {
         }
 
         return this.#pool;
+    }
+
+    async graphRepository() {
+        if (!this.#repository) {
+            const pool = await this.db();
+            this.#repository = new PostgresGraphRepository(pool);
+        }
+        return this.#repository;
     }
 
     async #initialize() {
@@ -229,7 +263,13 @@ export class PostgresDbManager {
     }
 
     async #ensureVectorExtension(client) {
-        await client.query('CREATE EXTENSION IF NOT EXISTS vector');
+        try {
+            await client.query('CREATE EXTENSION IF NOT EXISTS vector');
+            this.#vectorSupported = true;
+        } catch (error) {
+            this.#vectorSupported = false;
+            console.error('pgvector extension unavailable, falling back to bytea embeddings');
+        }
     }
 
     async #createTables(client) {
@@ -264,7 +304,7 @@ export class PostgresDbManager {
             CREATE TABLE IF NOT EXISTS obs_vec (
                 observation_id INTEGER PRIMARY KEY,
                 entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-                embedding vector(1024)
+                embedding ${this.#vectorSupported ? 'vector(1024)' : 'text'}
             )
         `);
 
