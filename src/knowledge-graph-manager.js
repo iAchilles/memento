@@ -231,7 +231,7 @@ export class KnowledgeGraphManager {
         return {
             entities:  ents.map(e => ({
                 name:         e.name,
-                entityType:   e.entityType,
+                entityType:   e.entityType ?? e.entitytype,
                 observations: obs
                                   .filter(o => o.entity_id === e.id)
                                   .map(o => o.content)
@@ -239,7 +239,7 @@ export class KnowledgeGraphManager {
             relations: relRows.map(r => ({
                 from:         r.fn,
                 to:           r.tn,
-                relationType: r.relationType
+                relationType: r.relationType ?? r.relationtype
             }))
         };
     }
@@ -399,7 +399,7 @@ export class KnowledgeGraphManager {
         return {
             entities:  ents.map(e => ({
                 name:         e.name,
-                entityType:   e.entityType,
+                entityType:   e.entityType ?? e.entitytype,
                 observations: obs
                                   .filter(o => o.entity_id === e.id)
                                   .map(o => o.content)
@@ -407,7 +407,7 @@ export class KnowledgeGraphManager {
             relations: rel.map(r => ({
                 from:         r.fn,
                 to:           r.tn,
-                relationType: r.relationType
+                relationType: r.relationType ?? r.relationtype
             }))
         };
     }
@@ -532,7 +532,7 @@ export class KnowledgeGraphManager {
 
         const placeholders = entityIds.map(() => "?").join(",");
         const results = await this.#db.all(
-            `SELECT 
+            `SELECT
                 e.id as entity_id,
                 e.name,
                 e.entityType,
@@ -554,7 +554,10 @@ export class KnowledgeGraphManager {
             entityIds
         );
 
-        return results;
+        return results.map(row => ({
+            ...row,
+            entityType: row.entityType ?? row.entitytype
+        }));
     }
 
     /**
