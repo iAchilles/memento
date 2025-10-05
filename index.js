@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'module';
-import { DbManager } from './src/db-manager.js';
+import { createDbManager } from './src/db-manager.js';
 import { KnowledgeGraphManager } from './src/knowledge-graph-manager.js';
 import { Server } from './src/server.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -20,10 +20,22 @@ if (engines?.node) {
     }
 }
 
-const dbManager = new DbManager(
-    process.env.MEMORY_DB_PATH,
-    process.env.SQLITE_VEC_PATH
-);
+const dbManager = createDbManager({
+    driver: process.env.MEMORY_DB_DRIVER,
+    sqlite: {
+        dbPath: process.env.MEMORY_DB_PATH,
+        sqliteVecPath: process.env.SQLITE_VEC_PATH
+    },
+    postgres: {
+        connectionString: process.env.MEMORY_DB_DSN || process.env.DATABASE_URL,
+        host: process.env.PGHOST,
+        port: process.env.PGPORT,
+        user: process.env.PGUSER,
+        password: process.env.PGPASSWORD,
+        database: process.env.PGDATABASE,
+        ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined
+    }
+});
 const db = await dbManager.db();
 const knowledgeGraphManager = new KnowledgeGraphManager(db);
 const transport = new StdioServerTransport();

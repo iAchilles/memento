@@ -40,6 +40,30 @@ MEMORY_DB_PATH="/Your/Path/To/memory.db" memento
 ## @iachilles/memento v0.3.3 is ready!
 ```
 
+## Configuration
+
+Memento now supports pluggable storage backends. Configuration is controlled
+entirely through environment variables so it remains easy to embed inside MCP
+workflows.
+
+| Variable | Description |
+| --- | --- |
+| `MEMORY_DB_DRIVER` | Optional selector for the database backend. Defaults to `sqlite`. Set to `postgres` to enable the PostgreSQL manager. |
+| `MEMORY_DB_PATH` | Filesystem path for the SQLite database file (only used when the driver is `sqlite`). |
+| `SQLITE_VEC_PATH` | Optional absolute path to a pre-built `sqlite-vec` extension shared library. |
+| `MEMORY_DB_DSN` / `DATABASE_URL` | PostgreSQL connection string consumed by the `pg` client. |
+| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Individual PostgreSQL connection parameters. Used when no DSN is provided. |
+| `PGSSLMODE` | When set to `require`, SSL will be enabled with `rejectUnauthorized: false`. |
+
+### PostgreSQL notes
+
+- The PostgreSQL manager requires the [`pgvector`](https://github.com/pgvector/pgvector)
+  extension. It is automatically initialized with `CREATE EXTENSION IF NOT EXISTS vector`.
+- Schema management currently mirrors the SQLite layout so both backends expose
+  the same tables. Advanced SQLite features (FTS5, sqlite-vec) are still required
+  by the current knowledge-graph implementation, so PostgreSQL support should be
+  considered experimental until the higher-level query layer is updated.
+
 Claude Desktop:
 
 ```
