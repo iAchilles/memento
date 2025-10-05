@@ -36,8 +36,8 @@ const dbManager = createDbManager({
         ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined
     }
 });
-const db = await dbManager.db();
-const knowledgeGraphManager = new KnowledgeGraphManager(db);
+const repository = await dbManager.graphRepository();
+const knowledgeGraphManager = new KnowledgeGraphManager(repository);
 const transport = new StdioServerTransport();
 
 console.error(`Starting ${SERVER_NAME} v${SERVER_VERSION}...`);

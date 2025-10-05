@@ -7,6 +7,7 @@ Provides persistent memory capabilities through a SQLite-based knowledge graph t
 - Fast keyword search (FTS5)
 - Semantic vector search (sqlite-vec, 1024d)
 - Offline embedding model (`bge-m3`)
+- Modular repository layer with SQLite and PostgreSQL backends
 - Enhanced Relevance Scoring with temporal, popularity, contextual, and importance factors
 - Structured graph of `entities`, `observations`, and `relations`
 - Easy integration with Claude Desktop (via MCP)
@@ -59,10 +60,16 @@ workflows.
 
 - The PostgreSQL manager requires the [`pgvector`](https://github.com/pgvector/pgvector)
   extension. It is automatically initialized with `CREATE EXTENSION IF NOT EXISTS vector`.
-- Schema management currently mirrors the SQLite layout so both backends expose
-  the same tables. Advanced SQLite features (FTS5, sqlite-vec) are still required
-  by the current knowledge-graph implementation, so PostgreSQL support should be
-  considered experimental until the higher-level query layer is updated.
+- Schema management mirrors the SQLite layout so both backends expose the same
+  logical entities/observations/relations tables.
+- Keyword search uses PostgreSQL full-text search (`to_tsvector`/`plainto_tsquery`)
+  with a secondary `ILIKE` fallback for entity names. Creating a `GIN` +
+  `pg_trgm` index is recommended for production workloads.
+- When `pgvector` is unavailable (for example in in-memory testing environments)
+  embeddings are stored as base64 encoded text and distance is computed in
+  JavaScript. Result ordering and thresholds remain compatible with the vector
+  implementation, but performance will be lower because distance computation is
+  done client-side.
 
 Claude Desktop:
 

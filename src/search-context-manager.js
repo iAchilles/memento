@@ -230,11 +230,11 @@ export class SearchContextManager extends ContextManager {
 /**
  * Factory function to create SearchContextManager.
  * 
- * @param {import('sqlite').Database} db - Database connection
+ * @param {import('./graph-repository.js').GraphRepository} repository - Repository implementation
  * @returns {SearchContextManager} Search context manager instance
  */
-export function createSearchContextManager(db) {
-    return new SearchContextManager(db);
+export function createSearchContextManager(repository) {
+    return new SearchContextManager(repository);
 }
 
 export default SearchContextManager;
