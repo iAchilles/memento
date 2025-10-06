@@ -62,7 +62,7 @@ export class SqliteGraphRepository {
         try {
             for (const { observationId, entityId, embedding } of rows) {
                 await this.db.run(
-                    'INSERT OR REPLACE INTO obs_vec(observation_id, entity_id, embedding) VALUES(?, ?, ?)',
+                    'INSERT OR REPLACE INTO obs_vec(rowid, entity_id, embedding) VALUES(?, ?, ?)',
                     [observationId, entityId, embedding]
                 );
             }
@@ -111,6 +111,10 @@ export class SqliteGraphRepository {
     async readGraph() {
         const entities = await this.db.all('SELECT * FROM entities');
         const observations = await this.db.all('SELECT entity_id, content FROM observations');
+        /**
+         *
+         * @type {[{from_name, to_name, relationType}]}
+         */
         const relations = await this.db.all(`
             SELECT r.from_id, r.to_id, r.relationType, ef.name AS from_name, et.name AS to_name
             FROM relations r
@@ -121,7 +125,7 @@ export class SqliteGraphRepository {
         return {
             entities: entities.map(entity => ({
                 name: entity.name,
-                entityType: entity.entityType ?? entity.entitytype,
+                entityType: entity.entityType,
                 observations: observations
                     .filter(obs => obs.entity_id === entity.id)
                     .map(obs => obs.content)
@@ -129,7 +133,7 @@ export class SqliteGraphRepository {
             relations: relations.map(rel => ({
                 from: rel.from_name,
                 to: rel.to_name,
-                relationType: rel.relationType ?? rel.relationtype
+                relationType: rel.relationType
             }))
         };
     }
@@ -240,7 +244,7 @@ export class SqliteGraphRepository {
         );
         return rows.map(row => ({
             ...row,
-            entityType: row.entityType ?? row.entitytype
+            entityType: row.entityType
         }));
     }
 
@@ -263,6 +267,10 @@ export class SqliteGraphRepository {
             `SELECT entity_id, content FROM observations WHERE entity_id IN (${idPlaceholders})`,
             ids
         );
+        /**
+         *
+         * @type {[{from_name, to_name, relationType}]}
+         */
         const relations = await this.db.all(
             `SELECT r.from_id, r.to_id, r.relationType, ef.name AS from_name, et.name AS to_name
              FROM relations r
@@ -271,10 +279,11 @@ export class SqliteGraphRepository {
              WHERE r.from_id IN (${idPlaceholders}) AND r.to_id IN (${idPlaceholders})`,
             [...ids, ...ids]
         );
+
         return {
             entities: entities.map(entity => ({
                 name: entity.name,
-                entityType: entity.entityType ?? entity.entitytype,
+                entityType: entity.entityType,
                 observations: observations
                     .filter(obs => obs.entity_id === entity.id)
                     .map(obs => obs.content)
@@ -282,7 +291,7 @@ export class SqliteGraphRepository {
             relations: relations.map(relation => ({
                 from: relation.from_name,
                 to: relation.to_name,
-                relationType: relation.relationType ?? relation.relationtype
+                relationType: relation.relationType
             }))
         };
     }
@@ -356,22 +365,5 @@ export class SqliteGraphRepository {
             [importance, entityId]
         );
         return result.changes > 0;
-    }
-
-    async addTags(entityId, tags) {
-        const row = await this.db.get(
-            'SELECT id, tags FROM observations WHERE entity_id = ? LIMIT 1',
-            [entityId]
-        );
-        if (!row) {
-            return false;
-        }
-        const existing = row.tags ? JSON.parse(row.tags) : [];
-        const merged = [...new Set([...existing, ...tags])];
-        await this.db.run(
-            'UPDATE observations SET tags = ? WHERE entity_id = ?',
-            [JSON.stringify(merged), entityId]
-        );
-        return true;
     }
 }

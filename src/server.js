@@ -242,28 +242,5 @@ export class Server extends McpServer {
                 }]
             })
         );
-
-        // Tool: add_tags
-        this.tool(
-            'add_tags',
-            'Add tags to an entity for better categorization and searchability.',
-            {
-                entityName: z.string().describe('Name of the entity.'),
-                tags: z.union([
-                    z.array(z.string()),
-                    z.string()
-                ]).describe('Tags to add (string or array of strings).')
-            },
-            async ({ entityName, tags }) => ({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify(
-                        await this.#knowledgeGraphManager.addTags(entityName, tags),
-                        null,
-                        2
-                    )
-                }]
-            })
-        );
     }
 }

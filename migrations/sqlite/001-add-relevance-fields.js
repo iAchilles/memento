@@ -6,7 +6,7 @@
  */
 
 /**
- * @type {import('../src/migration-manager').Migration}
+ * @type {import('../../src/migration-manager.js').Migration}
  */
 export const migration = {
     version: 1,

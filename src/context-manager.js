@@ -213,7 +213,7 @@ export class ContextManager {
     /**
      * Repository abstraction for backend access.
      * @private
-     * @type {import('./graph-repository.js').GraphRepository}
+     * @type {import('./graph-repository.js').GraphRepository|null}
      */
     #repository = null;
 
@@ -376,9 +376,7 @@ export class ContextManager {
         }
         
         try {
-            const results = await this.#repository.getRecentlyAccessedEntities(Math.min(limit, contextCache.maxRecentEntities));
-
-            contextCache.recentEntities = results;
+            contextCache.recentEntities = await this.#repository.getRecentlyAccessedEntities(Math.min(limit, contextCache.maxRecentEntities));
             contextCache.lastUpdate = Date.now();
 
             return contextCache.recentEntities.slice(0, limit);
@@ -585,11 +583,6 @@ export class ContextManager {
      * @param {string} entityId - Entity ID
      * @param {string} importance - Importance level from ImportanceLevel enum
      * @returns {Promise<boolean>} Success status
-     * 
-     * @example
-     * await contextManager.setImportance('Project_MEMENTO', ImportanceLevel.CRITICAL);
-     * // Also accepts string values for backward compatibility
-     * await contextManager.setImportance('Session_2025', 'normal');
      */
     async setImportance(entityId, importance) {
         const validLevels = Object.values(ImportanceLevel);

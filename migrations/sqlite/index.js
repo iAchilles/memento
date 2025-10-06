@@ -1,25 +1,26 @@
 /**
- * @file migrations/index.js
+ * @file migrations/sqlite/index.js
  * @description
  * Central registry of all database migrations.
  * Import and export all migrations in version order.
  */
-
 import { migration as migration001 } from './001-add-relevance-fields.js';
+import { migration as migration002 } from './002-remove-passive-tags.js';
 
 /**
  * All available migrations in version order.
- * @type {import('../src/migration-manager').Migration[]}
+ * @type {import('../../src/migration-manager.js').Migration[]}
  */
 export const migrations = [
-    migration001
+    migration001,
+    migration002
 ];
 
 /**
  * Gets migrations within a version range.
  * @param {number} [fromVersion=0] - Starting version (exclusive)
  * @param {number} [toVersion=Infinity] - Ending version (inclusive)
- * @returns {import('../src/migration-manager').Migration[]}
+ * @returns {import('../../src/migration-manager.js').Migration[]}
  */
 export function getMigrations(fromVersion = 0, toVersion = Infinity) {
     return migrations.filter(m => m.version > fromVersion && m.version <= toVersion);

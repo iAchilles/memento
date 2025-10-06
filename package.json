@@ -27,11 +27,6 @@
     "node": ">=18"
   },
   "license": "MIT",
-  "scripts": {
-    "migrate": "node cli/migrate.js",
-    "migrate:status": "node cli/migrate.js --status",
-    "migrate:rollback": "node cli/migrate.js --rollback"
-  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@xenova/transformers": "^2.17.2",
@@ -40,8 +35,5 @@
     "sqlite-vec": "^0.1.7-alpha.2",
     "sqlite3": "^5.1.7",
     "zod": "^3.25.56"
-  },
-  "devDependencies": {
-    "pg-mem": "^2.6.13"
   }
 }

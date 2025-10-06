@@ -14,7 +14,7 @@ export class KnowledgeGraphManager {
      */
     #repository;
 
-    /** @type {import('@xenova/transformers').Pipeline|null} */
+    /** @type {any} */
     #embedder = null;
 
     /** @type {SearchContextManager} */
@@ -101,34 +101,38 @@ export class KnowledgeGraphManager {
         return this.#repository.readGraph();
     }
 
-    async searchNodes({ query, mode = 'keyword', topK = 8, threshold = 0.35, includeScoreDetails = false, scoringProfile = 'balanced' }) {
-        let adjustedThreshold = threshold;
-        if (mode === 'semantic' || mode === 'hybrid') {
-            adjustedThreshold = 2 * (1 - threshold);
-        }
+    async searchNodes({
+                          query,
+                          mode = 'keyword',
+                          topK = 10,                 // было 8
+                          threshold = 0.35,          // трактуем как cosine distance cap
+                          includeScoreDetails = false,
+                          scoringProfile = 'balanced',
+                      }) {
+        const distanceCap = threshold;
 
         if (mode === 'keyword') {
             const ids = await this.#repository.keywordSearch(query);
-            if (!ids.length) {
-                return { entities: [], relations: [] };
-            }
+            if (!ids.length) return { entities: [], relations: [] };
             return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
         }
 
         try {
             const [vector] = await this.embedTexts([query]);
+
             let rows;
             if (mode === 'semantic') {
-                rows = await this.#repository.semanticSearch(vector, topK);
+                rows = await this.#repository.semanticSearch(vector, Math.max(topK * 2, topK + 5));
             } else {
-                rows = await this.#repository.hybridSearch(query, vector, topK, adjustedThreshold);
+                rows = await this.#repository.hybridSearch(query, vector, Math.max(topK * 3, topK + 10), distanceCap);
             }
+
             const ids = rows
-                .filter(row => row.distance <= adjustedThreshold)
-                .map(row => row.entity_id);
-            if (!ids.length) {
-                return { entities: [], relations: [] };
-            }
+                .filter(r => Number(r.distance) <= distanceCap)
+                .slice(0, topK)               // после фильтра оставляем topK
+                .map(r => r.entity_id);
+
+            if (!ids.length) return { entities: [], relations: [] };
             return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
         } catch (error) {
             console.error(`Search error in ${mode} mode:`, error.message);
@@ -192,12 +196,13 @@ export class KnowledgeGraphManager {
         if (!create) {
             return null;
         }
+
         return this.#repository.getOrCreateEntityId(name, type);
     }
 
     async setImportance(entityName, importance) {
         try {
-            const entityId = await this.getEntityId(entityName, null, false);
+            const entityId = await this.getEntityId(entityName);
             if (!entityId) {
                 return { success: false, error: `Entity "${entityName}" not found` };
             }
@@ -209,27 +214,6 @@ export class KnowledgeGraphManager {
                 message: success
                     ? `Importance set to '${importance}' for entity '${entityName}'`
                     : `Failed to set importance for entity '${entityName}'`
-            };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    }
-
-    async addTags(entityName, tags) {
-        try {
-            const entityId = await this.getEntityId(entityName, null, false);
-            if (!entityId) {
-                return { success: false, error: `Entity "${entityName}" not found` };
-            }
-            const normalized = Array.isArray(tags) ? tags : [tags];
-            const success = await this.#searchContextManager.addTags(entityId, normalized);
-            return {
-                success,
-                entityName,
-                tags: normalized,
-                message: success
-                    ? `Tags added to entity '${entityName}'`
-                    : `Failed to add tags to entity '${entityName}'`
             };
         } catch (error) {
             return { success: false, error: error.message };
