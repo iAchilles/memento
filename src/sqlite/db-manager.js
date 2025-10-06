@@ -88,7 +88,6 @@ export class SqliteDbManager {
             }
 
             await this.#createTables();
-            await this.#createTriggers();
             await this.#applyMigrations();
         }
 
@@ -193,39 +192,7 @@ export class SqliteDbManager {
             )
                 );
             CREATE
-            VIRTUAL TABLE IF NOT EXISTS obs_fts USING fts5(content, entity_id UNINDEXED);
-CREATE
             VIRTUAL TABLE IF NOT EXISTS obs_vec USING vec0(entity_id INT, embedding FLOAT[1024]);
-        `);
-    }
-
-    /**
-     * Creates the necessary triggers.
-     * @returns {Promise<void>}
-     * @private
-     */
-    #createTriggers() {
-        return this.#db.exec(`
--- Trigger for insert
-CREATE TRIGGER IF NOT EXISTS obs_fts_insert AFTER INSERT ON observations
-BEGIN
-    INSERT INTO obs_fts(rowid, content, entity_id)
-    VALUES (new.id, new.content, new.entity_id);
-END;
-
--- Trigger for delete
-CREATE TRIGGER IF NOT EXISTS obs_fts_delete AFTER DELETE ON observations
-BEGIN
-    DELETE FROM obs_fts WHERE rowid = old.id;
-END;
-
--- Trigger for update
-CREATE TRIGGER IF NOT EXISTS obs_fts_update AFTER UPDATE ON observations
-BEGIN
-    UPDATE obs_fts
-    SET content = new.content, entity_id = new.entity_id
-    WHERE rowid = new.id;
-END;
         `);
     }
 

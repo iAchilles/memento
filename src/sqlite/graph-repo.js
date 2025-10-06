@@ -223,122 +223,35 @@ export class SqliteGraphRepository {
     }
 
     /**
-     * Escapes special characters in LIKE patterns.
-     * @private
-     * @param {string} query - Query string to escape.
-     * @returns {string} Escaped query string.
-     */
-    #escapeLike(query) {
-        return query.replace(/[\\%_]/g, '\\$&');
-    }
-
-    /**
-     * Escapes FTS5 query syntax special characters.
-     * @private
-     * @param {string} query - Query string to escape.
-     * @returns {string} FTS5-safe quoted query string.
-     */
-    #escapeFts(query) {
-        const escaped = query.replace(/"/g, '""');
-
-        return `"${escaped}"`;
-    }
-
-    /**
-     * Performs keyword-based search across entity names, types, and observations.
-     * @async
-     * @param {string} query - Search query string.
-     * @returns {Promise<number[]>}
-     *   Array of entity IDs matching the search query.
-     */
-    async keywordSearch(query) {
-        const escapedFts = this.#escapeFts(query);
-        const ftsRows = await this.db.all(
-            'SELECT DISTINCT entity_id FROM obs_fts WHERE obs_fts MATCH ?',
-            [escapedFts]
-        );
-        const likePattern = `%${this.#escapeLike(query.toLowerCase())}%`;
-        const entityRows = await this.db.all(
-            `SELECT DISTINCT id AS entity_id FROM entities WHERE LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(entityType) LIKE ? ESCAPE '\\'`,
-            [likePattern, likePattern]
-        );
-
-        const ids = new Set([
-            ...ftsRows.map(row => row.entity_id),
-            ...entityRows.map(row => row.entity_id)
-        ]);
-
-        return Array.from(ids);
-    }
-
-    /**
      * Performs semantic search using vector similarity.
      * @async
-     * @param {Buffer} vector - Embedding vector as Buffer.
+     * @param {number[]} unitVector - Embedding vector as Buffer.
      * @param {number} topK - Maximum number of results to return.
      * @returns {Promise<Array<{entity_id: number, distance: number}>>}
      *   Array of entity IDs with their L2 distances.
      */
-    async semanticSearch(vector, topK) {
-        return this.db.all(
+    async semanticSearch(unitVector, topK) {
+        const bufVec = this.#float32BufferFromArray(unitVector);
+
+        const rows = await this.db.all(
             `SELECT entity_id, vec_distance_L2(embedding, ?) AS distance
-             FROM obs_vec
-             WHERE embedding IS NOT NULL
-             ORDER BY distance
-             LIMIT ?`,
-            [vector, topK]
-        );
-    }
-
-    /**
-     * Performs hybrid search combining keyword and semantic approaches.
-     * @async
-     * @param {string} query - Text query for keyword search.
-     * @param {Buffer} vector - Embedding vector for semantic search.
-     * @param {number} topK - Maximum number of results to return.
-     * @param {number} adjustedThreshold - Distance threshold for filtering results.
-     * @returns {Promise<Array<{entity_id: number, distance: number, score: number}>>}
-     *   Array of entity IDs with distances and combined scores.
-     */
-    async hybridSearch(query, vector, topK, adjustedThreshold) {
-        const escapedFts = this.#escapeFts(query);
-        const ftsRows = await this.db.all(
-            'SELECT DISTINCT entity_id FROM obs_fts WHERE obs_fts MATCH ?',
-            [escapedFts]
-        );
-        const vecRows = await this.db.all(
-            `SELECT entity_id, vec_distance_L2(embedding, ?) AS distance
-             FROM obs_vec
-             WHERE embedding IS NOT NULL
-             ORDER BY distance
-             LIMIT ?`,
-            [vector, topK * 2]
+                 FROM obs_vec
+                 WHERE embedding IS NOT NULL
+                 ORDER BY distance
+                 LIMIT ?`,
+            [ bufVec, topK ]
         );
 
-        const ftsSet = new Set(ftsRows.map(row => row.entity_id));
-        const results = [];
-        for (const row of vecRows) {
-            if (row.distance <= adjustedThreshold * 1.5) {
-                results.push({
-                    entity_id: row.entity_id,
-                    distance: row.distance,
-                    score: ftsSet.has(row.entity_id) ? row.distance * 0.3 : row.distance
-                });
+        return rows.map(r => {
+            const d = Number(r.distance)
+            const similarity = 1 - (d * d) / 2
+
+            return {
+                entity_id: Number(r.entity_id),
+                distance: d,
+                similarity
             }
-        }
-
-        for (const ftsRow of ftsRows) {
-            if (!results.find(row => row.entity_id === ftsRow.entity_id)) {
-                results.push({
-                    entity_id: ftsRow.entity_id,
-                    distance: adjustedThreshold * 0.5,
-                    score: adjustedThreshold * 0.5
-                });
-            }
-        }
-
-        results.sort((a, b) => a.score - b.score);
-        return results.slice(0, topK);
+        });
     }
 
     /**
@@ -358,7 +271,7 @@ export class SqliteGraphRepository {
          *
          * @type {{entity_id, name, entityType, created_at, last_accessed, access_count, importance}[]}
          */
-        const rows = await this.db.all(
+        return this.db.all(
             `SELECT
                  e.id AS entity_id,
                  e.name,
@@ -380,8 +293,6 @@ export class SqliteGraphRepository {
              GROUP BY e.id, e.name, e.entityType`,
             entityIds
         );
-
-        return rows;
     }
 
     /**
@@ -564,5 +475,23 @@ export class SqliteGraphRepository {
         );
 
         return result.changes > 0;
+    }
+
+    /**
+     * Converts a numeric embedding array into a Float32 binary buffer.
+     *
+     * This helper is used to transform a JavaScript number array (`number[]`)
+     * into a `Buffer` that stores the same values as a contiguous `Float32Array`.
+     * It is useful when passing embedding vectors to SQLite vector functions,
+     * which expect a binary blob rather than a JSON array.
+     *
+     * @private
+     * @param {number[]} values - The embedding values as a numeric array.
+     * @returns {Buffer} A Buffer containing the same data encoded as Float32.
+     */
+    #float32BufferFromArray(values) {
+        const fa = new Float32Array(values);
+
+        return Buffer.from(fa.buffer);
     }
 }

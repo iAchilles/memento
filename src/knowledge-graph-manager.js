@@ -154,54 +154,65 @@ export class KnowledgeGraphManager {
     }
 
     /**
-     * Searches the knowledge graph using keyword, semantic, or hybrid search.
+     * Searches the knowledge graph using semantic search.
      * @async
      * @param {object} options - Search configuration options.
      * @param {string} options.query - Search query string.
-     * @param {string} [options.mode='keyword'] - Search mode: 'keyword', 'semantic', or 'hybrid'.
      * @param {number} [options.topK=10] - Maximum number of results to return.
-     * @param {number} [options.threshold=0.35] - Distance threshold for semantic filtering.
-     * @param {boolean} [options.includeScoreDetails=false] - Whether to include score components in results.
-     * @param {string} [options.scoringProfile='balanced'] - Scoring profile to use: 'balanced', 'recency', etc.
+     * @param {number} [options.threshold=0.75] - Threshold
+     * @param {boolean} [options.includeScoreDetails=false] - Include score components in results.
+     * @param {string} [options.scoringProfile='balanced'] - Scoring profile to use.
      * @returns {Promise<{entities: Array, relations: Array}>}
      *   Search results with entities and their relations.
      */
     async searchNodes({
                           query,
-                          mode = 'keyword',
-                          topK = 10,                 // было 8
-                          threshold = 0.35,          // трактуем как cosine distance cap
+                          topK = 10,
+                          threshold = 0.75,
                           includeScoreDetails = false,
-                          scoringProfile = 'balanced',
+                          scoringProfile = 'balanced'
                       }) {
-        const distanceCap = threshold;
-
-        if (mode === 'keyword') {
-            const ids = await this.#repository.keywordSearch(query);
-            if (!ids.length) return { entities: [], relations: [] };
-            return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
-        }
 
         try {
-            const [vector] = await this.embedTexts([query]);
-
-            let rows;
-            if (mode === 'semantic') {
-                rows = await this.#repository.semanticSearch(vector, Math.max(topK * 2, topK + 5));
-            } else {
-                rows = await this.#repository.hybridSearch(query, vector, Math.max(topK * 3, topK + 10), distanceCap);
-            }
+            const [ rawVectorBuf ] = await this.embedTexts([ query ]);
+            const rawVector = Array.from(new Float32Array(rawVectorBuf.buffer, rawVectorBuf.byteOffset, rawVectorBuf.byteLength / 4));
+            const unitVector = normalizeVector(rawVector);
+            const limit = Math.max(topK * 2, topK + 5);
+            const rows = await this.#repository.semanticSearch(unitVector, limit);
 
             const ids = rows
-                .filter(r => Number(r.distance) <= distanceCap)
-                .slice(0, topK)               // после фильтра оставляем topK
+                .filter(r => Number(r.similarity) >= Number(threshold))
+                .slice(0, topK)
                 .map(r => r.entity_id);
 
-            if (!ids.length) return { entities: [], relations: [] };
+            if (!ids.length) {
+                return { entities: [], relations: [] }
+            }
+
             return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
+
         } catch (error) {
-            console.error(`Search error in ${mode} mode:`, error.message);
+            console.error(`Search error:`, error?.message ?? error);
+
             throw error;
+        }
+
+        function normalizeVector(v) {
+            let sum = 0;
+            for (let i = 0; i < v.length; i += 1) {
+                sum += v[i] * v[i];
+            }
+            const norm = Math.sqrt(sum)
+            if (!isFinite(norm) || norm === 0) {
+                return v;
+            }
+
+            const out = new Array(v.length)
+            for (let i = 0; i < v.length; i += 1) {
+                out[i] = v[i] / norm;
+            }
+
+            return out;
         }
     }
 
@@ -232,6 +243,7 @@ export class KnowledgeGraphManager {
             const result = await this.#embedder(text, { pooling: 'mean', normalize: true });
             outputs.push(Buffer.from(Float32Array.from(result.data).buffer));
         }
+
         return outputs;
     }
 
@@ -262,11 +274,14 @@ export class KnowledgeGraphManager {
         });
         scored.sort((a, b) => (b.score || 0) - (a.score || 0));
         const foundIds = scored.map(row => Number(row.entity_id));
+
         if (foundIds.length) {
             await this.#searchContextManager.updateAccessStats(foundIds);
         }
+
         const entityNames = scored.map(row => row.name);
         const fullDetails = await this.openNodes(entityNames);
+
         if (includeScoreDetails) {
             const withScores = fullDetails.entities.map((entity, index) => ({
                 ...entity,
@@ -275,6 +290,7 @@ export class KnowledgeGraphManager {
             }));
             return { entities: withScores, relations: fullDetails.relations };
         }
+
         return fullDetails;
     }
 
@@ -310,10 +326,13 @@ export class KnowledgeGraphManager {
     async setImportance(entityName, importance) {
         try {
             const entityId = await this.getEntityId(entityName);
+
             if (!entityId) {
                 return { success: false, error: `Entity "${entityName}" not found` };
             }
+
             const success = await this.#searchContextManager.setImportance(entityId, importance);
+
             return {
                 success,
                 entityName,
@@ -322,6 +341,7 @@ export class KnowledgeGraphManager {
                     ? `Importance set to '${importance}' for entity '${entityName}'`
                     : `Failed to set importance for entity '${entityName}'`
             };
+
         } catch (error) {
             return { success: false, error: error.message };
         }

@@ -6,6 +6,7 @@
  */
 import { migration as migration001 } from './001-add-relevance-fields.js';
 import { migration as migration002 } from './002-remove-passive-tags.js';
+import { migration as migration003 } from './003-remove-fts5.js';
 
 /**
  * All available migrations in version order.
@@ -13,7 +14,8 @@ import { migration as migration002 } from './002-remove-passive-tags.js';
  */
 export const migrations = [
     migration001,
-    migration002
+    migration002,
+    migration003
 ];
 
 /**

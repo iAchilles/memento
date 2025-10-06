@@ -175,13 +175,9 @@ export class Server extends McpServer {
         // Tool: search_nodes
         this.tool(
             'search_nodes',
-            'Search for entities and relations by keyword or semantic similarity. Supports hybrid mode.',
+            'Search for entities and relations by semantic similarity.',
             {
                 query:     z.string().describe('Search query string.'),
-                mode:      z.enum(['keyword', 'semantic', 'hybrid'])
-                               .optional()
-                               .default('keyword')
-                               .describe('Search mode to use.'),
                 topK:      z.number().int().min(1).max(100)
                                .optional()
                                .default(8)

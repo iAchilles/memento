@@ -5,8 +5,6 @@
  */
 
 
-const VECTOR_TYPE_NAME = 'vector';
-
 /**
  * @implements {import('../graph-repository.js').GraphRepository}
  */
@@ -21,45 +19,6 @@ export class PostgresGraphRepository {
      */
     constructor(pool) {
         this.#pool = pool;
-        this.vectorEnabledPromise = this.#detectVectorSupport();
-    }
-
-    /**
-     * Detects if pgvector extension is properly configured.
-     * @async
-     * @private
-     * @returns {Promise<boolean>}
-     *   True if vector support is available, false otherwise.
-     */
-    async #detectVectorSupport() {
-        const client = await /** @type {import('pg').Client} */ this.#pool.connect();
-        try {
-            const result = await client.query(
-                `SELECT 1
-                 FROM information_schema.columns
-                 WHERE table_name = 'obs_vec'
-                   AND column_name = 'embedding'
-                   AND udt_name = $1`,
-                [ VECTOR_TYPE_NAME ]
-            );
-            return result.rowCount > 0;
-        } finally {
-            client.release();
-        }
-    }
-
-    /**
-     * Ensures pgvector is enabled and throws if not available.
-     * @async
-     * @private
-     * @returns {Promise<void>}
-     * @throws {Error} If pgvector extension is not available.
-     */
-    async #requireVectorEnabled() {
-        const ok = await this.vectorEnabledPromise;
-        if (!ok) {
-            throw new Error('pgvector is required but not available: obs_vec.embedding must be of type vector');
-        }
     }
 
     /**
@@ -93,24 +52,36 @@ export class PostgresGraphRepository {
      * Performs semantic search using vector similarity.
      * @async
      * @private
-     * @param {Buffer} vector - Embedding vector as Buffer.
+     * @param {number[]} unitVector - Embedding vector as Buffer.
      * @param {number} limit - Maximum number of results to return.
-     * @returns {Promise<Array<{entity_id: number, distance: number}>>}
+     * @returns {Promise<Array<{entity_id: number, distance: number, similarity}>>}
      *   Array of entity IDs with their similarity distances.
      */
-    async #semanticRows(vector, limit) {
-        await this.#requireVectorEnabled();
+    async #semanticRows(unitVector, limit) {
+        const vectorLiteral = (values) => {
+            const s = values.join(',');
 
-        const rows = await this.#query(
-            `SELECT entity_id, embedding <=> $1::vector AS distance
-             FROM obs_vec
-             WHERE embedding IS NOT NULL
-             ORDER BY embedding <=> $1::vector
-        LIMIT $2`,
-            [ this.#bufferToVector(vector), limit ]
+            return `[${s}]`;
+        }
+
+        const rows = await this.#query(`SELECT entity_id,
+                            embedding <=> $1::vector AS distance
+                            FROM obs_vec
+                            WHERE embedding IS NOT NULL
+                            ORDER BY embedding <=> $1::vector LIMIT $2`,
+            [ vectorLiteral(unitVector), limit ]
         );
 
-        return rows.map(r => ({ entity_id: Number(r.entity_id), distance: Number(r.distance) }));
+        return rows.map(r => {
+            const distance = Number(r.distance)
+            const similarity = 1 - distance
+
+            return {
+                entity_id: Number(r.entity_id),
+                distance,
+                similarity
+            }
+        });
     }
 
     /**
@@ -212,8 +183,6 @@ export class PostgresGraphRepository {
         if (!rows.length) {
             return;
         }
-
-        await this.#requireVectorEnabled();
 
         const client = /** @type {import('pg').Client} */ await this.#pool.connect();
         try {
@@ -439,94 +408,15 @@ export class PostgresGraphRepository {
     }
 
     /**
-     * Performs keyword-based search across entity names, types, and observations.
-     * @async
-     * @param {string} query - Search query string.
-     * @returns {Promise<number[]>}
-     *   Array of entity IDs matching the search query.
-     */
-    async keywordSearch(query) {
-        const ftsRows = await this.#query(
-            `SELECT DISTINCT o.entity_id
-                 FROM observations AS o
-                 WHERE o.tsv @@ websearch_to_tsquery('simple', unaccent($1))`,
-            [query]
-        );
-
-        const likeRows = await this.#query(
-            `SELECT DISTINCT id AS entity_id
-                 FROM entities
-                WHERE name ILIKE $1 OR entitytype ILIKE $1`,
-            [`%${query}%`]
-        );
-
-        const ids = new Set([
-            ...ftsRows.map(r => Number(r.entity_id)),
-            ...likeRows.map(r => Number(r.entity_id)),
-        ]);
-
-        return Array.from(ids);
-    }
-
-    /**
      * Performs semantic search using vector similarity.
      * @async
-     * @param {Buffer} vector - Embedding vector as Buffer.
+     * @param {number[]} unitVector - Embedding vector.
      * @param {number} topK - Maximum number of results to return.
      * @returns {Promise<Array<{entity_id: number, distance: number}>>}
      *   Array of entity IDs with their similarity distances.
      */
-    async semanticSearch(vector, topK) {
-        return this.#semanticRows(vector, topK);
-    }
-
-    /**
-     * Performs hybrid search combining keyword and semantic approaches.
-     * @async
-     * @param {string} query - Text query for keyword search.
-     * @param {Buffer} vector - Embedding vector for semantic search.
-     * @param {number} topK - Maximum number of results to return.
-     * @param {number} adjustedThreshold - Distance threshold for filtering results.
-     * @returns {Promise<Array<{entity_id: number, distance: number, score: number}>>}
-     *   Array of entity IDs with distances and combined scores.
-     */
-    async hybridSearch(query, vector, topK, adjustedThreshold) {
-        const ftsRows = await this.#query(
-            `SELECT DISTINCT o.entity_id
-                 FROM observations AS o
-                 WHERE o.tsv @@ websearch_to_tsquery('simple', unaccent($1))`,
-            [query]
-        );
-        const ftsSet = new Set(ftsRows.map(r => Number(r.entity_id)));
-        const vecRows = await this.#semanticRows(vector, topK * 2);
-        const results = [];
-
-        for (const row of vecRows) {
-            const entityId = Number(row.entity_id);
-            const distance = Number(row.distance);
-
-            if (distance <= adjustedThreshold * 1.5) {
-                results.push({
-                    entity_id: entityId,
-                    distance,
-                    score: ftsSet.has(entityId) ? distance * 0.3 : distance,
-                });
-            }
-        }
-
-        for (const r of ftsRows) {
-            const entityId = Number(r.entity_id);
-            if (!results.find(x => x.entity_id === entityId)) {
-                results.push({
-                    entity_id: entityId,
-                    distance: adjustedThreshold * 0.5,
-                    score: adjustedThreshold * 0.5,
-                });
-            }
-        }
-        results.sort((a, b) => a.score - b.score);
-
-        return results.slice(0, topK);
+    async semanticSearch(unitVector, topK) {
+        return this.#semanticRows(unitVector, topK);
     }
 
     /**
