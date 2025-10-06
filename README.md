@@ -1,12 +1,12 @@
 # Memento
 ***Some memories are best persisted.***
 
-Provides persistent memory capabilities through a SQLite-based knowledge graph that stores entities, observations, and relationships with full-text and semantic search using BGE-M3 embeddings for intelligent context retrieval across conversations.
+Provides persistent memory capabilities through a SQLite-based knowledge graph that stores entities, observations, and relationships with semantic search using BGE-M3 embeddings for intelligent context retrieval across conversations.
 ## Features
 
-- Fast keyword search (FTS5)
-- Semantic vector search (sqlite-vec, 1024d)
+- Semantic vector search (sqlite-vec/pgvector, 1024d)
 - Offline embedding model (`bge-m3`)
+- Modular repository layer with SQLite and PostgreSQL backends
 - Enhanced Relevance Scoring with temporal, popularity, contextual, and importance factors
 - Structured graph of `entities`, `observations`, and `relations`
 - Easy integration with Claude Desktop (via MCP)
@@ -15,7 +15,7 @@ Provides persistent memory capabilities through a SQLite-based knowledge graph t
 
 ### System SQLite Version Check
 
-Memento requires SQLite 3.38+ for FTS5 support. Most macOS and Linux distros ship `sqlite3` out of the box, but double-check that it's there and new enough:
+Memento requires SQLite 3.38+. Most macOS and Linux distros ship `sqlite3` out of the box, but double-check that it's there and new enough:
 
 ```bash
 sqlite3 --version       # should print a version string, e.g. 3.46.0
@@ -31,14 +31,25 @@ If you see "command not found" (or your version is older than 3.38), install SQL
 | **Debian / Ubuntu**  | `sudo apt update && sudo apt install sqlite3` |
 
 
-## Usage
+## Configuration
 
-```bash
-MEMORY_DB_PATH="/Your/Path/To/memory.db" memento
+Memento now supports pluggable storage backends. Configuration is controlled
+entirely through environment variables so it remains easy to embed inside MCP
+workflows.
 
-## Starting @iachilles/memento v0.3.3...
-## @iachilles/memento v0.3.3 is ready!
-```
+| Variable | Description |
+| --- | --- |
+| `MEMORY_DB_DRIVER` | Optional selector for the database backend. Defaults to `sqlite`. Set to `postgres` to enable the PostgreSQL manager. |
+| `MEMORY_DB_PATH` | Filesystem path for the SQLite database file (only used when the driver is `sqlite`). |
+| `SQLITE_VEC_PATH` | Optional absolute path to a pre-built `sqlite-vec` extension shared library. |
+| `MEMORY_DB_DSN` / `DATABASE_URL` | PostgreSQL connection string consumed by the `pg` client. |
+| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Individual PostgreSQL connection parameters. Used when no DSN is provided. |
+| `PGSSLMODE` | When set to `require`, SSL will be enabled with `rejectUnauthorized: false`. |
+
+### PostgreSQL notes
+
+- The PostgreSQL manager requires the [`pgvector`](https://github.com/pgvector/pgvector)
+  extension. It is automatically initialized with `CREATE EXTENSION IF NOT EXISTS vector`.
 
 Claude Desktop:
 
@@ -94,10 +105,9 @@ This server exposes the following MCP tools:
 - `delete_relations`
 - `delete_observations`
 - `read_graph`
-- `search_nodes` (mode: `keyword`, `semantic`)
+- `search_nodes`
 - `open_nodes`
 - `set_importance` - Set importance level (critical/important/normal/temporary/deprecated)
-- `add_tags` - Add categorization tags
 #### An example of an instruction set that an LLM should know for effective memory handling (see MEMORY_PROTOCOL.md)
 
 ## Embedding Model

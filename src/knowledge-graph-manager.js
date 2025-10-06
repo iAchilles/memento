@@ -1,663 +1,349 @@
 /**
  * @file knowledge-graph-manager.js
  * @description
- * Provides methods to manage a knowledge graph stored in SQLite, including entities,
- * observations, and relations. Uses FTS5 and sqlite-vec for keyword and semantic search.
- * Embeddings are generated via @xenova/transformers.
+ * Backend-agnostic knowledge graph manager that coordinates CRUD and search
+ * operations through a repository abstraction.
  */
 
 import { pipeline } from '@xenova/transformers';
 import { SearchContextManager } from './search-context-manager.js';
 
-/**
- * Manages a knowledge graph persisted in SQLite.
- * Supports creating, reading, updating, and deleting entities, observations, and relations,
- * as well as performing keyword and semantic searches over observations.
- */
 export class KnowledgeGraphManager {
     /**
-     * @type {import('sqlite').Database}
+     * @type {import('./graph-repository.js').GraphRepository}
      */
-    #db = null;
+    #repository;
 
-    /**
-     * @type {import('@xenova/transformers').Pipeline|null}
-     */
+    /** @type {any} */
     #embedder = null;
 
-    /**
-     * @type {SearchContextManager|null}
-     */
-    #searchContextManager = null;
+    /** @type {SearchContextManager} */
+    #searchContextManager;
 
     /**
-     * Creates an instance of KnowledgeGraphManager.
-     * @param {import('sqlite').Database} db - An opened SQLite database connection.
+     * Creates a new KnowledgeGraphManager.
+     * @param {import('./graph-repository.js').GraphRepository} repository
+     *   Graph repository implementation for data persistence.
      */
-    constructor(db) {
-        this.#db = db;
-        this.#searchContextManager = new SearchContextManager(db);
+    constructor(repository) {
+        this.#repository = repository;
+        this.#searchContextManager = new SearchContextManager(repository);
     }
 
     /**
-     * Inserts or ignores multiple entities into the database.
-     * Also adds any provided observations for each entity.
-     * @param {Array<{ name: string, entityType: string, observations?: string[] }>} entities
-     *   List of entities to create.
-     * @returns {Promise<Array<{ name: string, entityType: string, observations?: string[] }>>}
-     *   The subset of input entities that were newly created.
+     * Creates multiple entities in the knowledge graph.
+     * @async
+     * @param {Array<{name: string, entityType: string, observations?: string[]}>} entities
+     *   Array of entities to create with optional observations.
+     * @returns {Promise<Array<{name: string, entityType: string}>>}
+     *   Array of successfully created entities.
      */
     async createEntities(entities) {
         const created = [];
-        for (const e of entities) {
-            const existing = await this.#db.get(
-                "SELECT id FROM entities WHERE name = ?",
-                [e.name]
-            );
-            
-            if (!existing) {
-                const res = await this.#db.run(
-                    "INSERT INTO entities(name, entityType) VALUES(?, ?)",
-                    [e.name, e.entityType]
-                );
-                created.push(e);
+        for (const entity of entities) {
+            const existingId = await this.#repository.getEntityId(entity.name);
+            if (!existingId) {
+                await this.#repository.createEntity(entity.name, entity.entityType);
+                created.push(entity);
             }
-            
-            if (e.observations?.length) {
-                await this.addObservations([{ entityName: e.name, contents: e.observations }]);
+            if (entity.observations?.length) {
+                await this.addObservations([{ entityName: entity.name, contents: entity.observations }]);
             }
         }
-
         return created;
     }
 
     /**
-     * Adds observations (text) to existing entities and indexes them for FTS and semantic search.
-     * @param {Array<{ entityName: string, contents: string[] }>} arr
-     *   Array of objects specifying which observations to add for which entity.
-     * @returns {Promise<Array<{ entityName: string, addedObservations: string[] }>>}
-     *   For each input, the list of observations actually added.
+     * Adds observations to entities and generates embeddings for them.
+     * @async
+     * @param {Array<{entityName: string, contents: string[]}>} list
+     *   Array of objects containing entity names and their observations.
+     * @returns {Promise<Array<{entityName: string, addedObservations: string[]}>>}
+     *   Array of results showing which observations were added to each entity.
      */
-    async addObservations(arr) {
+    async addObservations(list) {
         const results = [];
-        for (const { entityName, contents } of arr) {
-            const eid      = await this.getEntityId(entityName, "Unknown", true);
-            const newTexts = [];
-            for (const t of contents) {
-                const res = await this.#db.run(
-                    "INSERT OR IGNORE INTO observations(entity_id, content) VALUES(?, ?)",
-                    [ eid, t ]
-                );
-                if (res.changes) {
-                    newTexts.push(t);
+        for (const { entityName, contents } of list) {
+            const entityId = await this.#repository.getOrCreateEntityId(entityName, 'Unknown');
+            const inserted = [];
+            for (const content of contents) {
+                const { inserted: wasInserted, observationId } = await this.#repository.insertObservation(entityId, content);
+                if (wasInserted && observationId !== null && observationId !== undefined) {
+                    inserted.push({ observationId, content });
                 }
             }
-
-            if (newTexts.length) {
-                const vecs = await this.embedTexts(newTexts);
-                
-                await this.#db.exec("BEGIN TRANSACTION");
-                try {
-                    for (let i = 0; i < newTexts.length; i++) {
-                        const obsRow = await this.#db.get(
-                            "SELECT id FROM observations WHERE entity_id = ? AND content = ?",
-                            [eid, newTexts[i]]
-                        );
-                        
-                        if (obsRow && vecs[i]) {
-                            await this.#db.run(
-                                "INSERT INTO obs_vec VALUES(?, ?, ?)",
-                                [obsRow.id, eid, vecs[i]]
-                            );
-                        }
-                    }
-                    await this.#db.exec("COMMIT");
-                } catch (error) {
-                    await this.#db.exec("ROLLBACK");
-                    console.error("Error inserting vectors:", error.message);
-                    throw error;
-                }
+            if (inserted.length) {
+                const embeddings = await this.embedTexts(inserted.map(row => row.content));
+                const vectorRows = inserted.map((row, index) => ({
+                    observationId: row.observationId,
+                    entityId,
+                    embedding: embeddings[index]
+                }));
+                await this.#repository.insertObservationVectors(vectorRows);
             }
-
-            results.push({ entityName, addedObservations: newTexts });
+            results.push({ entityName, addedObservations: inserted.map(item => item.content) });
         }
-
         return results;
     }
 
     /**
-     * Creates directed relations between existing or new entities.
-     * @param {Array<{ from: string, to: string, relationType: string }>} relations
-     *   List of relations to create.
-     * @returns {Promise<Array<{ from: string, to: string, relationType: string }>>}
-     *   The subset of input relations that were newly created.
+     * Creates relations between entities in the knowledge graph.
+     * @async
+     * @param {Array<{from: string, to: string, relationType: string}>} relations
+     *   Array of relations to create.
+     * @returns {Promise<Array<{from: string, to: string, relationType: string}>>}
+     *   Array of successfully created relations.
      */
     async createRelations(relations) {
         const created = [];
-        for (const r of relations) {
-            const fromId = await this.getEntityId(r.from, "Unknown", true);
-            const toId   = await this.getEntityId(r.to, "Unknown", true);
-            const res    = await this.#db.run(
-                "INSERT OR IGNORE INTO relations(from_id, to_id, relationType) VALUES(?,?,?)",
-                [ fromId, toId, r.relationType ]
-            );
-
-            if (res.changes) {
-                created.push(r);
+        for (const relation of relations) {
+            const fromId = await this.#repository.getOrCreateEntityId(relation.from, 'Unknown');
+            const toId = await this.#repository.getOrCreateEntityId(relation.to, 'Unknown');
+            const inserted = await this.#repository.createRelation(fromId, toId, relation.relationType);
+            if (inserted) {
+                created.push(relation);
             }
         }
-
         return created;
     }
 
     /**
-     * Deletes entities by their names.
+     * Deletes entities from the knowledge graph by their names.
+     * @async
      * @param {string[]} names - Array of entity names to delete.
      * @returns {Promise<void>}
      */
     async deleteEntities(names) {
-        const placeholders = names.map(() => "?").join(",");
-        await this.#db.run(
-            `DELETE
-             FROM entities
-             WHERE name IN (${placeholders})`,
-            names
-        );
+        await this.#repository.deleteEntities(names);
     }
 
     /**
-     * Deletes specified relations.
-     * @param {Array<{ from: string, to: string, relationType: string }>} relations
-     *   List of relations to remove.
+     * Deletes relations between entities.
+     * @async
+     * @param {Array<{from: string, to: string, relationType: string}>} relations
+     *   Array of relations to delete.
      * @returns {Promise<void>}
      */
     async deleteRelations(relations) {
-        for (const r of relations) {
-            const fromId = await this.getEntityId(r.from);
-            const toId   = await this.getEntityId(r.to);
-            if (fromId && toId) {
-                await this.#db.run(
-                    `DELETE
-                     FROM relations
-                     WHERE from_id = ?
-                       AND to_id = ?
-                       AND relationType = ?`,
-                    [ fromId, toId, r.relationType ]
-                );
-            }
-        }
+        await this.#repository.deleteRelations(relations);
     }
 
     /**
-     * Deletes specified observations for entities.
-     * @param {Array<{ entityName: string, observations: string[] }>} list
-     *   Which observations to delete for which entity.
+     * Deletes specific observations from entities.
+     * @async
+     * @param {Array<{entityName: string, observations: string[]}>} list
+     *   Array of objects containing entity names and observations to delete.
      * @returns {Promise<void>}
      */
     async deleteObservations(list) {
         for (const { entityName, observations } of list) {
-            const eid = await this.getEntityId(entityName);
-            if (!eid) {
-                continue;
-            }
-
-            const placeholders = observations.map(() => "?").join(",");
-            await this.#db.run(
-                `DELETE
-                 FROM observations
-                 WHERE entity_id = ?
-                   AND content IN (${placeholders})`,
-                [ eid, ...observations ]
-            );
+            const entityId = await this.#repository.getEntityId(entityName);
+            if (!entityId) continue;
+            await this.#repository.deleteObservations(entityId, observations);
         }
     }
 
     /**
-     * Reads the entire knowledge graph (entities, observations, relations).
-     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[] }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
+     * Retrieves the complete knowledge graph.
+     * @async
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing all entities and relations in the graph.
      */
-    async readGraph() {
-        const ents    = await this.#db.all("SELECT * FROM entities");
-        const obs     = await this.#db.all(
-            "SELECT entity_id, content FROM observations"
-        );
-        const relRows = await this.#db.all(
-            `SELECT r.from_id, r.to_id, r.relationType, ef.name AS fn, et.name AS tn
-             FROM relations r
-                      JOIN entities ef ON ef.id = r.from_id
-                      JOIN entities et ON et.id = r.to_id`
-        );
-
-        return {
-            entities:  ents.map(e => ({
-                name:         e.name,
-                entityType:   e.entityType,
-                observations: obs
-                                  .filter(o => o.entity_id === e.id)
-                                  .map(o => o.content)
-            })),
-            relations: relRows.map(r => ({
-                from:         r.fn,
-                to:           r.tn,
-                relationType: r.relationType
-            }))
-        };
+    readGraph() {
+        return this.#repository.readGraph();
     }
 
     /**
-     * Searches for entities matching a query, either by keyword or semantically.
-     * @param {{ query: string, mode?: "keyword" | "semantic" | "hybrid", topK?: number, threshold?: number, includeScoreDetails?: boolean, scoringProfile?: string|Object }}
-     *   Search options.
-     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[], score?: number, scoreComponents?: Object }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
+     * Searches the knowledge graph using semantic search.
+     * @async
+     * @param {object} options - Search configuration options.
+     * @param {string} options.query - Search query string.
+     * @param {number} [options.topK=10] - Maximum number of results to return.
+     * @param {number} [options.threshold=0.75] - Threshold
+     * @param {boolean} [options.includeScoreDetails=false] - Include score components in results.
+     * @param {string} [options.scoringProfile='balanced'] - Scoring profile to use.
+     * @returns {Promise<{entities: Array, relations: Array}>}
+     *   Search results with entities and their relations.
      */
-    async searchNodes({ query, mode = "keyword", topK = 8, threshold = 0.35, includeScoreDetails = false, scoringProfile = 'balanced' }) {
-        let adjustedThreshold = threshold;
-        if (mode === "semantic" || mode === "hybrid") {
-            adjustedThreshold = 2 * (1 - threshold);
-        }
-        
-        if (mode === "keyword") {
-            const ftsRows = await this.#db.all(
-                `SELECT DISTINCT entity_id 
-                 FROM obs_fts 
-                 WHERE obs_fts MATCH ?`,
-                [this.#escapeFTSQuery(query)]
-            );
-            
-            const q = `%${this.#escapeLikeQuery(query.toLowerCase())}%`;
-            const entityRows = await this.#db.all(
-                `SELECT DISTINCT id as entity_id
-                 FROM entities
-                 WHERE LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(entityType) LIKE ? ESCAPE '\\'`,
-                [q, q]
-            );
-            
-            const allIds = [...new Set([
-                ...ftsRows.map(r => r.entity_id),
-                ...entityRows.map(r => r.entity_id)
-            ])];
-            
-            if (allIds.length === 0) {
-                return { entities: [], relations: [] };
-            }
-            
-            
-            return this.#applyScoring(allIds, query, includeScoreDetails, scoringProfile);
-        }
-        
+    async searchNodes({
+                          query,
+                          topK = 10,
+                          threshold = 0.75,
+                          includeScoreDetails = false,
+                          scoringProfile = 'balanced'
+                      }) {
+
         try {
-            const [qVec] = await this.embedTexts([query]);
-            
-            let rows;
-            if (mode === "semantic") {
-                rows = await this.#db.all(
-                    `SELECT entity_id, vec_distance_L2(embedding, ?) AS d
-                     FROM obs_vec
-                     WHERE embedding IS NOT NULL
-                     ORDER BY d 
-                     LIMIT ?`,
-                    [qVec, topK]
-                );
-            } else {
-                const ftsRows = await this.#db.all(
-                    `SELECT DISTINCT entity_id FROM obs_fts WHERE obs_fts MATCH ?`,
-                    [this.#escapeFTSQuery(query)]
-                );
-                
-                const vecRows = await this.#db.all(
-                    `SELECT entity_id, vec_distance_L2(embedding, ?) AS d
-                     FROM obs_vec
-                     WHERE embedding IS NOT NULL
-                     ORDER BY d 
-                     LIMIT ?`,
-                    [qVec, topK * 2]
-                );
-                
-                const ftsSet = new Set(ftsRows.map(r => r.entity_id));
-                const hybridResults = [];
-                
-                for (const row of vecRows) {
-                    if (row.d <= adjustedThreshold * 1.5) {
-                        hybridResults.push({
-                            entity_id: row.entity_id,
-                            score: ftsSet.has(row.entity_id) ? row.d * 0.3 : row.d,
-                            d: row.d
-                        });
-                    }
-                }
-                
-                for (const ftsRow of ftsRows) {
-                    if (!hybridResults.find(r => r.entity_id === ftsRow.entity_id)) {
-                        hybridResults.push({
-                            entity_id: ftsRow.entity_id,
-                            score: adjustedThreshold * 0.5,
-                            d: adjustedThreshold * 0.5
-                        });
-                    }
-                }
-                
-                hybridResults.sort((a, b) => a.score - b.score);
-                rows = hybridResults.slice(0, topK);
+            const [ rawVectorBuf ] = await this.embedTexts([ query ]);
+            const rawVector = Array.from(new Float32Array(rawVectorBuf.buffer, rawVectorBuf.byteOffset, rawVectorBuf.byteLength / 4));
+            const unitVector = normalizeVector(rawVector);
+            const limit = Math.max(topK * 2, topK + 5);
+            const rows = await this.#repository.semanticSearch(unitVector, limit);
+
+            const ids = rows
+                .filter(r => Number(r.similarity) >= Number(threshold))
+                .slice(0, topK)
+                .map(r => r.entity_id);
+
+            if (!ids.length) {
+                return { entities: [], relations: [] }
             }
-            
-            const ids = rows.filter(r => r.d <= adjustedThreshold).map(r => r.entity_id);
-            
-            if (ids.length === 0) {
-                return { entities: [], relations: [] };
-            }
-            
-            
+
             return this.#applyScoring(ids, query, includeScoreDetails, scoringProfile);
-            
+
         } catch (error) {
-            console.error(`Search error in ${mode} mode:`, error.message);
-            
-            if (error.message.includes('no such function')) {
-                console.error('sqlite-vec functions are not available. Verify that the extension has been successfully loaded.');
-                
-                return this.searchNodes({ query, mode: 'keyword', topK, threshold });
-            }
-            
+            console.error(`Search error:`, error?.message ?? error);
+
             throw error;
         }
+
+        function normalizeVector(v) {
+            let sum = 0;
+            for (let i = 0; i < v.length; i += 1) {
+                sum += v[i] * v[i];
+            }
+            const norm = Math.sqrt(sum)
+            if (!isFinite(norm) || norm === 0) {
+                return v;
+            }
+
+            const out = new Array(v.length)
+            for (let i = 0; i < v.length; i += 1) {
+                out[i] = v[i] / norm;
+            }
+
+            return out;
+        }
     }
 
     /**
-     * Retrieves full entity and relation details for given entity names.
-     * @param {string[]} names - Array of entity names to open.
-     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[] }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
+     * Retrieves detailed information for specified entities by their names.
+     * @async
+     * @param {string[]} names - Array of entity names to retrieve.
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing specified entities with observations and their relations.
      */
     async openNodes(names) {
-        if (!names.length) {
-            return { entities: [], relations: [] };
-        }
-
-        const placeholders = names.map(() => "?").join(",");
-        const ents         = await this.#db.all(
-            `SELECT *
-             FROM entities
-             WHERE name IN (${placeholders})`,
-            names
-        );
-        const ids          = ents.map(e => e.id);
-        const obs          = await this.#db.all(
-            `SELECT entity_id, content
-             FROM observations
-             WHERE entity_id IN (${ids.map(() => "?").join(",")})`,
-            ids
-        );
-        const rel          = await this.#db.all(
-            `SELECT r.from_id, r.to_id, r.relationType, ef.name fn, et.name tn
-             FROM relations r
-                      JOIN entities ef ON ef.id = r.from_id
-                      JOIN entities et ON et.id = r.to_id
-             WHERE r.from_id IN (${ids.map(() => "?").join(",")})
-               AND r.to_id IN (${ids.map(() => "?").join(",")})`,
-            [ ...ids, ...ids ]
-        );
-
-        return {
-            entities:  ents.map(e => ({
-                name:         e.name,
-                entityType:   e.entityType,
-                observations: obs
-                                  .filter(o => o.entity_id === e.id)
-                                  .map(o => o.content)
-            })),
-            relations: rel.map(r => ({
-                from:         r.fn,
-                to:           r.tn,
-                relationType: r.relationType
-            }))
-        };
+        return this.#repository.openNodes(names);
     }
 
     /**
-     * Generates embeddings for an array of texts using a Transformer pipeline.
-     * @param {string[]} textArr - Array of raw text strings to embed.
-     * @returns {Promise<Buffer[]>} Array of raw embedding buffers (Float32 LE).
+     * Generates embeddings for an array of text strings using the configured model.
+     * @async
+     * @param {string[]} textArr - Array of text strings to embed.
+     * @returns {Promise<Buffer[]>}
+     *   Array of embedding vectors as Buffers.
      */
     async embedTexts(textArr) {
         if (!this.#embedder) {
-        this.#embedder = await pipeline(
-                "feature-extraction",
-                "Xenova/bge-m3",
-                { quantized: true }
-            );
+            this.#embedder = await pipeline('feature-extraction', 'Xenova/bge-m3', { quantized: true });
         }
-        const outs = [];
-        for (const t of textArr) {
-            const out = await this.#embedder(t, { pooling: "mean", normalize: true });
-            outs.push(Buffer.from(Float32Array.from(out.data).buffer));
+        const outputs = [];
+        for (const text of textArr) {
+            const result = await this.#embedder(text, { pooling: 'mean', normalize: true });
+            outputs.push(Buffer.from(Float32Array.from(result.data).buffer));
         }
 
-        return outs;
+        return outputs;
     }
 
     /**
-     * Escapes LIKE query string to prevent wildcard injection.
-     * Escapes %, _, and \ characters which have special meaning in LIKE.
-     * @param {string} query - Raw search query
-     * @returns {string} Safely escaped LIKE query
-     */
-    #escapeLikeQuery(query) {
-        return query.replace(/[\\%_]/g, '\\$&');
-    }
-
-    /**
-     * Escapes FTS5 query string to prevent SQL injection.
-     * Wraps the query in double quotes and escapes internal quotes.
-     * @param {string} query - Raw search query
-     * @returns {string} Safely escaped FTS5 query
-     */
-    #escapeFTSQuery(query) {
-        const escaped = query.replace(/"/g, '""');
-        return `"${escaped}"`;
-    }
-
-    /**
-     * Applies relevance scoring to search results and formats output
+     * Applies relevance scoring to search results using context and access patterns.
+     * @async
      * @private
-     * @param {number[]} entityIds - Array of entity IDs from search
-     * @param {string} query - Original search query
-     * @param {boolean} includeScoreDetails - Whether to include score components
-     * @param {string|Object} scoringProfile - Scoring profile name or custom weights
-     * @returns {Promise<{ entities: Array<{ name: string, entityType: string, observations: string[], score?: number, scoreComponents?: Object }>, relations: Array<{ from: string, to: string, relationType: string }> }>}
+     * @param {number[]} entityIds - Array of entity IDs from search results.
+     * @param {string} query - Original search query for context.
+     * @param {boolean} includeScoreDetails - Whether to include score components.
+     * @param {string} scoringProfile - Scoring profile to use.
+     * @returns {Promise<{entities: Array, relations: Array}>}
+     *   Scored and sorted results with entities and relations.
      */
-    async #applyScoring(entityIds, query, includeScoreDetails = false, scoringProfile = 'balanced') {
-        if (!entityIds || entityIds.length === 0) {
+    async #applyScoring(entityIds, query, includeScoreDetails, scoringProfile) {
+        if (!entityIds?.length) {
             return { entities: [], relations: [] };
         }
-
-        const entityData = await this._performBaseSearch(entityIds);
-        
-        // Convert entity_id from number to string for compatibility
-        const entityDataForScoring = entityData.map(entity => ({
-            ...entity,
-            entity_id: String(entity.entity_id)
-        }));
-        
+        const entityData = await this.#repository.fetchEntitiesWithDetails(entityIds);
+        const normalized = entityData.map(row => ({ ...row, entity_id: String(row.entity_id) }));
         const searchContext = await this.#searchContextManager.prepareSearchContext(query, {
             contextSize: 5,
             preloadDepth: 2
         });
-        const scoredResults = await this.#searchContextManager.scoreSearchResults(
-            entityDataForScoring,
-            searchContext,
-            { 
-                includeComponents: includeScoreDetails,
-                scoringProfile: scoringProfile
-            }
-        );
-        
-        scoredResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-        
-        // Convert entity_id back to numbers for updateAccessStats
-        const foundIds = scoredResults.map(r => Number(r.entity_id));
+        const scored = await this.#searchContextManager.scoreSearchResults(normalized, searchContext, {
+            includeComponents: includeScoreDetails,
+            scoringProfile
+        });
+        scored.sort((a, b) => (b.score || 0) - (a.score || 0));
+        const foundIds = scored.map(row => Number(row.entity_id));
 
-        if (foundIds.length > 0) {
+        if (foundIds.length) {
             await this.#searchContextManager.updateAccessStats(foundIds);
         }
-        
-        const entityNames = scoredResults.map(r => r.name);
+
+        const entityNames = scored.map(row => row.name);
         const fullDetails = await this.openNodes(entityNames);
-        
+
         if (includeScoreDetails) {
-            // Create new array with score details added
-            const entitiesWithScores = fullDetails.entities.map((entity, idx) => ({
+            const withScores = fullDetails.entities.map((entity, index) => ({
                 ...entity,
-                score: scoredResults[idx]?.score,
-                scoreComponents: scoredResults[idx]?.scoreComponents
+                score: scored[index]?.score,
+                scoreComponents: scored[index]?.scoreComponents
             }));
-            
-            return {
-                entities: entitiesWithScores,
-                relations: fullDetails.relations
-            };
+            return { entities: withScores, relations: fullDetails.relations };
         }
-        
+
         return fullDetails;
     }
 
     /**
-     * Performs base search and retrieves entities with metadata for scoring
-     * @private
-     * @param {number[]} entityIds - Array of entity IDs from search
-     * @returns {Promise<Array<{entity_id: number, name: string, entityType: string, created_at: string|null, last_accessed: string|null, access_count: number, importance: string}>>}
-     */
-    async _performBaseSearch(entityIds) {
-        if (!entityIds || entityIds.length === 0) {
-            return [];
-        }
-
-        const placeholders = entityIds.map(() => "?").join(",");
-        const results = await this.#db.all(
-            `SELECT 
-                e.id as entity_id,
-                e.name,
-                e.entityType,
-                MIN(o.created_at) as created_at,
-                MAX(o.last_accessed) as last_accessed,
-                SUM(o.access_count) as access_count,
-                COALESCE(
-                    (SELECT o2.importance 
-                     FROM observations o2 
-                     WHERE o2.entity_id = e.id 
-                     ORDER BY o2.last_accessed DESC 
-                     LIMIT 1),
-                    'normal'
-                ) as importance
-            FROM entities e
-            LEFT JOIN observations o ON o.entity_id = e.id
-            WHERE e.id IN (${placeholders})
-            GROUP BY e.id, e.name, e.entityType`,
-            entityIds
-        );
-
-        return results;
-    }
-
-    /**
-     * Retrieves the numeric ID for an entity by name, optionally creating it.
+     * Retrieves or optionally creates an entity ID by name.
+     * @async
      * @param {string} name - Entity name to look up.
-     * @param {string} [type="Unknown"] - Entity type when creating.
-     * @param {boolean} [create=false] - If true, creates the entity if it does not exist.
-     * @returns {Promise<number|null>} The entity ID, or null if not found and not created.
+     * @param {string} [type='Unknown'] - Entity type to use if creating.
+     * @param {boolean} [create=false] - Whether to create the entity if not found.
+     * @returns {Promise<number|null>}
+     *   Entity ID if found or created, null if not found and create is false.
      */
-    async getEntityId(name, type = "Unknown", create = false) {
-        const row = await this.#db.get(
-            "SELECT id FROM entities WHERE name = ?",
-            name
-        );
-        if (row) {
-            return row.id;
+    async getEntityId(name, type = 'Unknown', create = false) {
+        const existing = await this.#repository.getEntityId(name);
+        if (existing !== null) {
+            return existing;
+        }
+        if (!create) {
+            return null;
         }
 
-        if (create) {
-            const r = await this.#db.run(
-                "INSERT INTO entities(name, entityType) VALUES(?, ?)",
-                [ name, type ]
-            );
-
-            return r.lastID;
-        }
-
-        return null;
+        return this.#repository.getOrCreateEntityId(name, type);
     }
 
     /**
      * Sets the importance level for an entity.
-     * 
-     * @param {string} entityName - Name of the entity
-     * @param {string} importance - Importance level ('critical', 'important', 'normal', 'temporary', 'deprecated')
-     * @returns {Promise<Object>} Result with success status
-     * 
-     * @example
-     * await kgm.setImportance('Project_MEMENTO', 'critical');
+     * @async
+     * @param {string} entityName - Name of the entity to update.
+     * @param {string} importance - Importance level (e.g., 'critical', 'important', 'normal').
+     * @returns {Promise<{success: boolean, entityName?: string, importance?: string, message?: string, error?: string}>}
+     *   Object indicating operation success and details or error message.
      */
     async setImportance(entityName, importance) {
         try {
-            const entityId = await this.getEntityId(entityName, null, false);
+            const entityId = await this.getEntityId(entityName);
+
             if (!entityId) {
-                return {
-                    success: false,
-                    error: `Entity "${entityName}" not found`
-                };
+                return { success: false, error: `Entity "${entityName}" not found` };
             }
 
             const success = await this.#searchContextManager.setImportance(entityId, importance);
-            
+
             return {
                 success,
                 entityName,
                 importance,
-                message: success ? 
-                    `Importance set to '${importance}' for entity '${entityName}'` :
-                    `Failed to set importance for entity '${entityName}'`
+                message: success
+                    ? `Importance set to '${importance}' for entity '${entityName}'`
+                    : `Failed to set importance for entity '${entityName}'`
             };
-        } catch (error) {
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
 
-    /**
-     * Adds tags to an entity.
-     * 
-     * @param {string} entityName - Name of the entity
-     * @param {Array<string>|string} tags - Tags to add
-     * @returns {Promise<Object>} Result with success status
-     * 
-     * @example
-     * await kgm.addTags('Session_2025-08-29', ['completed', 'phase5']);
-     */
-    async addTags(entityName, tags) {
-        try {
-            const entityId = await this.getEntityId(entityName, null, false);
-            if (!entityId) {
-                return {
-                    success: false,
-                    error: `Entity "${entityName}" not found`
-                };
-            }
-
-            const success = await this.#searchContextManager.addTags(entityId, tags);
-            
-            return {
-                success,
-                entityName,
-                tags: Array.isArray(tags) ? tags : [tags],
-                message: success ? 
-                    `Tags added to entity '${entityName}'` :
-                    `Failed to add tags to entity '${entityName}'`
-            };
         } catch (error) {
-            return {
-                success: false,
-                error: error.message
-            };
+            return { success: false, error: error.message };
         }
     }
 }

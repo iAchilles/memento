@@ -175,13 +175,9 @@ export class Server extends McpServer {
         // Tool: search_nodes
         this.tool(
             'search_nodes',
-            'Search for entities and relations by keyword or semantic similarity. Supports hybrid mode.',
+            'Search for entities and relations by semantic similarity.',
             {
                 query:     z.string().describe('Search query string.'),
-                mode:      z.enum(['keyword', 'semantic', 'hybrid'])
-                               .optional()
-                               .default('keyword')
-                               .describe('Search mode to use.'),
                 topK:      z.number().int().min(1).max(100)
                                .optional()
                                .default(8)
@@ -236,29 +232,6 @@ export class Server extends McpServer {
                     type: 'text',
                     text: JSON.stringify(
                         await this.#knowledgeGraphManager.setImportance(entityName, importance),
-                        null,
-                        2
-                    )
-                }]
-            })
-        );
-
-        // Tool: add_tags
-        this.tool(
-            'add_tags',
-            'Add tags to an entity for better categorization and searchability.',
-            {
-                entityName: z.string().describe('Name of the entity.'),
-                tags: z.union([
-                    z.array(z.string()),
-                    z.string()
-                ]).describe('Tags to add (string or array of strings).')
-            },
-            async ({ entityName, tags }) => ({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify(
-                        await this.#knowledgeGraphManager.addTags(entityName, tags),
                         null,
                         2
                     )
