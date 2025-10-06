@@ -21,13 +21,23 @@ export class KnowledgeGraphManager {
     #searchContextManager;
 
     /**
+     * Creates a new KnowledgeGraphManager.
      * @param {import('./graph-repository.js').GraphRepository} repository
+     *   Graph repository implementation for data persistence.
      */
     constructor(repository) {
         this.#repository = repository;
         this.#searchContextManager = new SearchContextManager(repository);
     }
 
+    /**
+     * Creates multiple entities in the knowledge graph.
+     * @async
+     * @param {Array<{name: string, entityType: string, observations?: string[]}>} entities
+     *   Array of entities to create with optional observations.
+     * @returns {Promise<Array<{name: string, entityType: string}>>}
+     *   Array of successfully created entities.
+     */
     async createEntities(entities) {
         const created = [];
         for (const entity of entities) {
@@ -43,6 +53,14 @@ export class KnowledgeGraphManager {
         return created;
     }
 
+    /**
+     * Adds observations to entities and generates embeddings for them.
+     * @async
+     * @param {Array<{entityName: string, contents: string[]}>} list
+     *   Array of objects containing entity names and their observations.
+     * @returns {Promise<Array<{entityName: string, addedObservations: string[]}>>}
+     *   Array of results showing which observations were added to each entity.
+     */
     async addObservations(list) {
         const results = [];
         for (const { entityName, contents } of list) {
@@ -68,6 +86,14 @@ export class KnowledgeGraphManager {
         return results;
     }
 
+    /**
+     * Creates relations between entities in the knowledge graph.
+     * @async
+     * @param {Array<{from: string, to: string, relationType: string}>} relations
+     *   Array of relations to create.
+     * @returns {Promise<Array<{from: string, to: string, relationType: string}>>}
+     *   Array of successfully created relations.
+     */
     async createRelations(relations) {
         const created = [];
         for (const relation of relations) {
@@ -81,14 +107,34 @@ export class KnowledgeGraphManager {
         return created;
     }
 
+    /**
+     * Deletes entities from the knowledge graph by their names.
+     * @async
+     * @param {string[]} names - Array of entity names to delete.
+     * @returns {Promise<void>}
+     */
     async deleteEntities(names) {
         await this.#repository.deleteEntities(names);
     }
 
+    /**
+     * Deletes relations between entities.
+     * @async
+     * @param {Array<{from: string, to: string, relationType: string}>} relations
+     *   Array of relations to delete.
+     * @returns {Promise<void>}
+     */
     async deleteRelations(relations) {
         await this.#repository.deleteRelations(relations);
     }
 
+    /**
+     * Deletes specific observations from entities.
+     * @async
+     * @param {Array<{entityName: string, observations: string[]}>} list
+     *   Array of objects containing entity names and observations to delete.
+     * @returns {Promise<void>}
+     */
     async deleteObservations(list) {
         for (const { entityName, observations } of list) {
             const entityId = await this.#repository.getEntityId(entityName);
@@ -97,10 +143,29 @@ export class KnowledgeGraphManager {
         }
     }
 
+    /**
+     * Retrieves the complete knowledge graph.
+     * @async
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing all entities and relations in the graph.
+     */
     readGraph() {
         return this.#repository.readGraph();
     }
 
+    /**
+     * Searches the knowledge graph using keyword, semantic, or hybrid search.
+     * @async
+     * @param {object} options - Search configuration options.
+     * @param {string} options.query - Search query string.
+     * @param {string} [options.mode='keyword'] - Search mode: 'keyword', 'semantic', or 'hybrid'.
+     * @param {number} [options.topK=10] - Maximum number of results to return.
+     * @param {number} [options.threshold=0.35] - Distance threshold for semantic filtering.
+     * @param {boolean} [options.includeScoreDetails=false] - Whether to include score components in results.
+     * @param {string} [options.scoringProfile='balanced'] - Scoring profile to use: 'balanced', 'recency', etc.
+     * @returns {Promise<{entities: Array, relations: Array}>}
+     *   Search results with entities and their relations.
+     */
     async searchNodes({
                           query,
                           mode = 'keyword',
@@ -140,10 +205,24 @@ export class KnowledgeGraphManager {
         }
     }
 
+    /**
+     * Retrieves detailed information for specified entities by their names.
+     * @async
+     * @param {string[]} names - Array of entity names to retrieve.
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing specified entities with observations and their relations.
+     */
     async openNodes(names) {
         return this.#repository.openNodes(names);
     }
 
+    /**
+     * Generates embeddings for an array of text strings using the configured model.
+     * @async
+     * @param {string[]} textArr - Array of text strings to embed.
+     * @returns {Promise<Buffer[]>}
+     *   Array of embedding vectors as Buffers.
+     */
     async embedTexts(textArr) {
         if (!this.#embedder) {
             this.#embedder = await pipeline('feature-extraction', 'Xenova/bge-m3', { quantized: true });
@@ -156,6 +235,17 @@ export class KnowledgeGraphManager {
         return outputs;
     }
 
+    /**
+     * Applies relevance scoring to search results using context and access patterns.
+     * @async
+     * @private
+     * @param {number[]} entityIds - Array of entity IDs from search results.
+     * @param {string} query - Original search query for context.
+     * @param {boolean} includeScoreDetails - Whether to include score components.
+     * @param {string} scoringProfile - Scoring profile to use.
+     * @returns {Promise<{entities: Array, relations: Array}>}
+     *   Scored and sorted results with entities and relations.
+     */
     async #applyScoring(entityIds, query, includeScoreDetails, scoringProfile) {
         if (!entityIds?.length) {
             return { entities: [], relations: [] };
@@ -188,6 +278,15 @@ export class KnowledgeGraphManager {
         return fullDetails;
     }
 
+    /**
+     * Retrieves or optionally creates an entity ID by name.
+     * @async
+     * @param {string} name - Entity name to look up.
+     * @param {string} [type='Unknown'] - Entity type to use if creating.
+     * @param {boolean} [create=false] - Whether to create the entity if not found.
+     * @returns {Promise<number|null>}
+     *   Entity ID if found or created, null if not found and create is false.
+     */
     async getEntityId(name, type = 'Unknown', create = false) {
         const existing = await this.#repository.getEntityId(name);
         if (existing !== null) {
@@ -200,6 +299,14 @@ export class KnowledgeGraphManager {
         return this.#repository.getOrCreateEntityId(name, type);
     }
 
+    /**
+     * Sets the importance level for an entity.
+     * @async
+     * @param {string} entityName - Name of the entity to update.
+     * @param {string} importance - Importance level (e.g., 'critical', 'important', 'normal').
+     * @returns {Promise<{success: boolean, entityName?: string, importance?: string, message?: string, error?: string}>}
+     *   Object indicating operation success and details or error message.
+     */
     async setImportance(entityName, importance) {
         try {
             const entityId = await this.getEntityId(entityName);

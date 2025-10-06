@@ -47,7 +47,7 @@ export class SQLiteMigrationManager {
 
     /**
      * Applies migrations up to the specified version.
-     * @param {Migration[]} migrations - Array of migrations to apply
+     * @param {import('../migration-manager').Migration[]} migrations - Array of migrations to apply
      * @param {number|null} [targetVersion] - Target version (defaults to latest)
      * @param {boolean} [silent=false] - Suppress console output (for MCP compatibility)
      * @returns {Promise<void>}
@@ -97,7 +97,7 @@ export class SQLiteMigrationManager {
 
     /**
      * Rolls back to a specific version.
-     * @param {Migration[]} migrations - Array of migrations
+     * @param {import('../migration-manager').Migration[]} migrations - Array of migrations
      * @param {number} targetVersion - Target version to rollback
      * @param {boolean} [silent=false] - Suppress console output (for MCP compatibility)
      * @returns {Promise<void>}

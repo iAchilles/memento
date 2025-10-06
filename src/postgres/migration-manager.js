@@ -3,26 +3,24 @@
  * @description Migration manager for PostgreSQL.
  */
 
-/**
- * @typedef {Object} PgMigration
- * @property {number} version
- * @property {string} description
- * @property {(client: import('pg').Client, silent: boolean) => Promise<void>} up
- * @property {(client: import('pg').Client, silent: boolean) => Promise<void>} down
- */
-
 export class PostgresMigrationManager {
 
     /** @type {*} */
     #pool;
 
     /**
-     * @param {*} pool
+     * Creates a new PostgresMigrationManager.
+     * @param {*} pool - PostgreSQL connection pool.
      */
     constructor(pool) {
         this.#pool = pool;
     }
 
+    /**
+     * Initializes migration tracking table if it doesn't exist.
+     * @async
+     * @returns {Promise<void>}
+     */
     async initialize() {
         await this.#pool.query(`
       CREATE TABLE IF NOT EXISTS migrations (
@@ -33,6 +31,12 @@ export class PostgresMigrationManager {
     `);
     }
 
+    /**
+     * Gets the current migration version from the database.
+     * @async
+     * @returns {Promise<number>}
+     *   Current migration version, or 0 if no migrations have been applied.
+     */
     async getCurrentVersion() {
         const { rows } = await this.#pool.query(`SELECT COALESCE(MAX(version), 0) AS version FROM migrations`);
 
@@ -40,9 +44,16 @@ export class PostgresMigrationManager {
     }
 
     /**
-     * @param {PgMigration[]} migrations
-     * @param {number|null} [targetVersion]
+     * Applies pending migrations up to a specified version.
+     * @async
+     * @param {import('../migration-manager').Migration[]} migrations
+     *   Array of migration objects to apply.
+     * @param {number|null} [targetVersion=null]
+     *   Target version to migrate to. If null, migrates to the latest version.
      * @param {boolean} [silent=false]
+     *   If true, suppresses console output.
+     * @returns {Promise<void>}
+     * @throws {Error} If migration fails and rolls back.
      */
     async migrate(migrations, targetVersion = null, silent = false) {
         const client = await this.#pool.connect();
@@ -88,9 +99,16 @@ export class PostgresMigrationManager {
     }
 
     /**
-     * @param {PgMigration[]} migrations
+     * Rolls back migrations to a specified version.
+     * @async
+     * @param {import('../migration-manager').Migration[]} migrations
+     *   Array of migration objects that can be rolled back.
      * @param {number} targetVersion
+     *   Target version to roll back to.
      * @param {boolean} [silent=false]
+     *   If true, suppresses console output.
+     * @returns {Promise<void>}
+     * @throws {Error} If rollback fails.
      */
     async rollback(migrations, targetVersion, silent = false) {
         const currentVersion = await this.getCurrentVersion();

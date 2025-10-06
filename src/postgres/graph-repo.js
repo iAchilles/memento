@@ -12,13 +12,25 @@ const VECTOR_TYPE_NAME = 'vector';
  */
 export class PostgresGraphRepository {
 
+    /** @type {*|null} */
     #pool = null;
 
+    /**
+     * Creates a new PostgresGraphRepository.
+     * @param {Pool} pool - PostgreSQL connection pool.
+     */
     constructor(pool) {
         this.#pool = pool;
         this.vectorEnabledPromise = this.#detectVectorSupport();
     }
 
+    /**
+     * Detects if pgvector extension is properly configured.
+     * @async
+     * @private
+     * @returns {Promise<boolean>}
+     *   True if vector support is available, false otherwise.
+     */
     async #detectVectorSupport() {
         const client = await /** @type {import('pg').Client} */ this.#pool.connect();
         try {
@@ -36,6 +48,13 @@ export class PostgresGraphRepository {
         }
     }
 
+    /**
+     * Ensures pgvector is enabled and throws if not available.
+     * @async
+     * @private
+     * @returns {Promise<void>}
+     * @throws {Error} If pgvector extension is not available.
+     */
     async #requireVectorEnabled() {
         const ok = await this.vectorEnabledPromise;
         if (!ok) {
@@ -43,12 +62,26 @@ export class PostgresGraphRepository {
         }
     }
 
+    /**
+     * Converts Buffer to pgvector-compatible string format.
+     * @private
+     * @param {Buffer} buffer - Buffer containing float32 array.
+     * @returns {string} Vector string in format "[x,y,z,...]".
+     */
     #bufferToVector(buffer) {
         const floats = Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
 
         return `[${floats.join(',')}]`;
     }
 
+    /**
+     * Executes a SQL query and returns rows.
+     * @async
+     * @private
+     * @param {string} sql - SQL query string.
+     * @param {Array} [params=[]] - Query parameters.
+     * @returns {Promise<Array>} Array of result rows.
+     */
     async #query(sql, params = []) {
         const pool = /** @type {any} */ (this.#pool);
         const res = await pool.query(sql, params);
@@ -56,6 +89,15 @@ export class PostgresGraphRepository {
         return res.rows;
     }
 
+    /**
+     * Performs semantic search using vector similarity.
+     * @async
+     * @private
+     * @param {Buffer} vector - Embedding vector as Buffer.
+     * @param {number} limit - Maximum number of results to return.
+     * @returns {Promise<Array<{entity_id: number, distance: number}>>}
+     *   Array of entity IDs with their similarity distances.
+     */
     async #semanticRows(vector, limit) {
         await this.#requireVectorEnabled();
 
@@ -71,6 +113,13 @@ export class PostgresGraphRepository {
         return rows.map(r => ({ entity_id: Number(r.entity_id), distance: Number(r.distance) }));
     }
 
+    /**
+     * Retrieves entity ID by name.
+     * @async
+     * @param {string} name - Entity name.
+     * @returns {Promise<number|null>}
+     *   Entity ID if found, null otherwise.
+     */
     async getEntityId(name) {
         const rows = await this.#query('SELECT id FROM entities WHERE name = $1', [ name ]);
 
@@ -79,6 +128,13 @@ export class PostgresGraphRepository {
             : null;
     }
 
+    /**
+     * Creates a new entity.
+     * @async
+     * @param {string} name - Entity name.
+     * @param {string} entityType - Entity type.
+     * @returns {Promise<number>} The ID of the created entity.
+     */
     async createEntity(name, entityType) {
         const rows = await this.#query(
             `INSERT INTO entities(name, entitytype)
@@ -89,6 +145,14 @@ export class PostgresGraphRepository {
         return rows[0].id;
     }
 
+    /**
+     * Gets or creates an entity ID.
+     * @async
+     * @param {string} name - Entity name.
+     * @param {string} entityType - Entity type.
+     * @returns {Promise<number>}
+     *   Existing or newly created entity ID.
+     */
     async getOrCreateEntityId(name, entityType) {
         const existing = await this.getEntityId(name);
         if (existing !== null) return existing;
@@ -105,6 +169,14 @@ export class PostgresGraphRepository {
         return rows[0].id;
     }
 
+    /**
+     * Inserts an observation for an entity.
+     * @async
+     * @param {number} entityId - Entity ID.
+     * @param {string} content - Observation content.
+     * @returns {Promise<{inserted: boolean, observationId: number|null}>}
+     *   Object indicating if observation was inserted and its ID.
+     */
     async insertObservation(entityId, content) {
         const rows = await this.#query(
             `INSERT INTO observations(entity_id, content)
@@ -128,6 +200,14 @@ export class PostgresGraphRepository {
         return { inserted: true, observationId: rows[0].id };
     }
 
+    /**
+     * Inserts or updates observation embeddings in the vector table.
+     * @async
+     * @param {Array<{observationId: number, entityId: number, embedding: Buffer}>} rows
+     *   Array of observation vectors to insert.
+     * @returns {Promise<void>}
+     * @throws {Error} If pgvector is not available.
+     */
     async insertObservationVectors(rows) {
         if (!rows.length) {
             return;
@@ -161,6 +241,15 @@ export class PostgresGraphRepository {
         }
     }
 
+    /**
+     * Creates a relation between two entities.
+     * @async
+     * @param {number} fromId - Source entity ID.
+     * @param {number} toId - Target entity ID.
+     * @param {string} relationType - Type of relation.
+     * @returns {Promise<boolean>}
+     *   True if relation was created, false if it already exists.
+     */
     async createRelation(fromId, toId, relationType) {
         const rows = await this.#query(
             `INSERT INTO relations(from_id, to_id, relationtype)
@@ -172,6 +261,12 @@ export class PostgresGraphRepository {
         return rows.length > 0;
     }
 
+    /**
+     * Deletes entities by their names.
+     * @async
+     * @param {string[]} names - Array of entity names to delete.
+     * @returns {Promise<void>}
+     */
     async deleteEntities(names) {
         if (!names.length) {
             return;
@@ -185,6 +280,13 @@ export class PostgresGraphRepository {
         );
     }
 
+    /**
+     * Deletes relations between entities.
+     * @async
+     * @param {Array<{from: string, to: string, relationType: string}>} relations
+     *   Array of relations to delete with entity names and relation type.
+     * @returns {Promise<void>}
+     */
     async deleteRelations(relations) {
         for (const relation of relations) {
             const fromId = await this.getEntityId(relation.from);
@@ -204,6 +306,13 @@ export class PostgresGraphRepository {
         }
     }
 
+    /**
+     * Deletes specific observations from an entity.
+     * @async
+     * @param {number} entityId - Entity ID from which to delete observations.
+     * @param {string[]} observations - Array of observation content strings to delete.
+     * @returns {Promise<void>}
+     */
     async deleteObservations(entityId, observations) {
         if (!observations.length) {
             return;
@@ -218,6 +327,12 @@ export class PostgresGraphRepository {
         );
     }
 
+    /**
+     * Retrieves the complete knowledge graph including all entities and relations.
+     * @async
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing all entities with their observations and all relations.
+     */
     async readGraph() {
         /**
          * @type {[{entitytype:string, name:string, id}]}
@@ -255,6 +370,13 @@ export class PostgresGraphRepository {
         };
     }
 
+    /**
+     * Retrieves detailed information for specified entities by their names.
+     * @async
+     * @param {string[]} names - Array of entity names to retrieve.
+     * @returns {Promise<{entities: Array<{name: string, entityType: string, observations: string[]}>, relations: Array<{from: string, to: string, relationType: string}>}>}
+     *   Object containing specified entities with observations and relations between them.
+     */
     async openNodes(names) {
         if (!names.length) {
             return { entities: [], relations: [] };
@@ -316,6 +438,13 @@ export class PostgresGraphRepository {
         };
     }
 
+    /**
+     * Performs keyword-based search across entity names, types, and observations.
+     * @async
+     * @param {string} query - Search query string.
+     * @returns {Promise<number[]>}
+     *   Array of entity IDs matching the search query.
+     */
     async keywordSearch(query) {
         const ftsRows = await this.#query(
             `SELECT DISTINCT o.entity_id
@@ -339,10 +468,28 @@ export class PostgresGraphRepository {
         return Array.from(ids);
     }
 
+    /**
+     * Performs semantic search using vector similarity.
+     * @async
+     * @param {Buffer} vector - Embedding vector as Buffer.
+     * @param {number} topK - Maximum number of results to return.
+     * @returns {Promise<Array<{entity_id: number, distance: number}>>}
+     *   Array of entity IDs with their similarity distances.
+     */
     async semanticSearch(vector, topK) {
         return this.#semanticRows(vector, topK);
     }
 
+    /**
+     * Performs hybrid search combining keyword and semantic approaches.
+     * @async
+     * @param {string} query - Text query for keyword search.
+     * @param {Buffer} vector - Embedding vector for semantic search.
+     * @param {number} topK - Maximum number of results to return.
+     * @param {number} adjustedThreshold - Distance threshold for filtering results.
+     * @returns {Promise<Array<{entity_id: number, distance: number, score: number}>>}
+     *   Array of entity IDs with distances and combined scores.
+     */
     async hybridSearch(query, vector, topK, adjustedThreshold) {
         const ftsRows = await this.#query(
             `SELECT DISTINCT o.entity_id
@@ -382,6 +529,13 @@ export class PostgresGraphRepository {
         return results.slice(0, topK);
     }
 
+    /**
+     * Fetches detailed metadata for specified entities including access statistics.
+     * @async
+     * @param {number[]} entityIds - Array of entity IDs to fetch details for.
+     * @returns {Promise<Array<{entity_id: number, name: string, entitytype: string, created_at: Date, last_accessed: Date, access_count: number, importance: string}>>}
+     *   Array of entities with their metadata and access statistics.
+     */
     async fetchEntitiesWithDetails(entityIds) {
         if (!entityIds.length) {
             return [];
@@ -412,6 +566,13 @@ export class PostgresGraphRepository {
         );
     }
 
+    /**
+     * Retrieves entity IDs that were recently accessed, sorted by last access time.
+     * @async
+     * @param {number} limit - Maximum number of entity IDs to return.
+     * @returns {Promise<number[]>}
+     *   Array of recently accessed entity IDs, most recent first.
+     */
     async getRecentlyAccessedEntities(limit) {
         const rows = await this.#query(
             `SELECT DISTINCT entity_id
@@ -425,6 +586,12 @@ export class PostgresGraphRepository {
         return rows.map(r => r.entity_id);
     }
 
+    /**
+     * Updates access statistics for specified entities.
+     * @async
+     * @param {number[]} entityIds - Array of entity IDs to update.
+     * @returns {Promise<void>}
+     */
     async updateAccessStats(entityIds) {
         if (!entityIds.length) {
             return;
@@ -441,6 +608,14 @@ export class PostgresGraphRepository {
         );
     }
 
+    /**
+     * Sets the importance level for all observations of an entity.
+     * @async
+     * @param {number} entityId - Entity ID to update importance for.
+     * @param {string} importance - Importance level (e.g., 'critical', 'important', 'normal').
+     * @returns {Promise<boolean>}
+     *   True if any observations were updated, false otherwise.
+     */
     async setImportance(entityId, importance) {
         const rows = await this.#query(
             `UPDATE observations
@@ -452,6 +627,13 @@ export class PostgresGraphRepository {
         return rows.length > 0;
     }
 
+    /**
+     * Retrieves entity IDs for a list of entity names.
+     * @async
+     * @param {string[]} names - Array of entity names to look up.
+     * @returns {Promise<Map<string, string>>}
+     *   Map of entity names to their IDs as strings.
+     */
     async getEntityIdsByNames(names) {
         if (!names.length) {
             return new Map();
@@ -471,6 +653,13 @@ export class PostgresGraphRepository {
         return map;
     }
 
+    /**
+     * Retrieves entity names for a list of entity IDs.
+     * @async
+     * @param {number[]} ids - Array of entity IDs to look up.
+     * @returns {Promise<Map<string, string>>}
+     *   Map of entity IDs (as strings) to their names.
+     */
     async getEntityNamesByIds(ids) {
         if (!ids.length) {
             return new Map();
@@ -491,6 +680,13 @@ export class PostgresGraphRepository {
         return map;
     }
 
+    /**
+     * Retrieves all relations involving specified entities.
+     * @async
+     * @param {number[]} entityIds - Array of entity IDs to get relations for.
+     * @returns {Promise<Array<{from_id: number, to_id: number}>>}
+     *   Array of relations where entity is either source or target.
+     */
     async getRelationsForEntityIds(entityIds) {
         if (!entityIds.length) {
             return [];

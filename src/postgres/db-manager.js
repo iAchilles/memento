@@ -10,10 +10,11 @@ import { migrations }               from '../../migrations/postgresql/index.js';
 
 /**
  * Manages PostgreSQL database connections and schema.
+ * @class
  */
 export class PostgresDbManager {
 
-    /** @type {Pool} */
+    /** @type {*} */
     #pool = null;
 
     /** @type {import('pg').PoolConfig} */
@@ -22,13 +23,20 @@ export class PostgresDbManager {
     /** @type {PostgresGraphRepository|null} */
     #repository = null;
 
+    /**
+     * Creates a new PostgresDbManager.
+     * @param {object} [config={}]
+     *   PostgreSQL connection configuration object.
+     */
     constructor(config = {}) {
         this.#config = this.#sanitizeConfig(config);
     }
 
     /**
      * Returns an initialized PostgreSQL pool.
-     * @returns {Promise<import('pg').Pool>}
+     * @async
+     * @returns {Promise<*>}
+     *   The initialized PostgreSQL connection pool.
      */
     async db() {
         if (!this.#pool) {
@@ -39,6 +47,12 @@ export class PostgresDbManager {
         return this.#pool;
     }
 
+    /**
+     * Returns a PostgreSQL graph repository.
+     * @async
+     * @returns {Promise<PostgresGraphRepository>}
+     *   The initialized graph repository instance.
+     */
     async graphRepository() {
         if (!this.#repository) {
             const pool = await this.db();
@@ -48,6 +62,13 @@ export class PostgresDbManager {
         return this.#repository;
     }
 
+    /**
+     * Initializes the database schema and extensions.
+     * @async
+     * @private
+     * @returns {Promise<void>}
+     * @throws {Error} If pool is not initialized or operations fail.
+     */
     async #initialize() {
         const pool = this.#pool;
         if (!pool) {
@@ -71,6 +92,14 @@ export class PostgresDbManager {
         await this.#applyMigrations();
     }
 
+    /**
+     * Ensures required PostgreSQL extensions are installed.
+     * @async
+     * @private
+     * @param {import('pg').Client} client - Database client instance.
+     * @returns {Promise<void>}
+     * @throws {Error} If pgvector extension is not available.
+     */
     async #ensureExtensions(client) {
         try {
             await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
@@ -85,6 +114,13 @@ export class PostgresDbManager {
         await client.query('CREATE EXTENSION IF NOT EXISTS unaccent;');
     }
 
+    /**
+     * Creates necessary database tables for the knowledge graph.
+     * @async
+     * @private
+     * @param {import('pg').Client} client - Database client instance.
+     * @returns {Promise<void>}
+     */
     async #createTables(client) {
         await client.query(`
             CREATE TABLE IF NOT EXISTS entities
@@ -130,6 +166,13 @@ export class PostgresDbManager {
         `);
     }
 
+    /**
+     * Creates database indexes for optimized search and queries.
+     * @async
+     * @private
+     * @param {import('pg').Client} client - Database client instance.
+     * @returns {Promise<void>}
+     */
     async #createIndexes(client) {
         await client.query(`
             CREATE INDEX IF NOT EXISTS observations_tsv_gin
@@ -159,6 +202,12 @@ export class PostgresDbManager {
 
     }
 
+    /**
+     * Sanitizes and normalizes database configuration.
+     * @private
+     * @param {object} config - Raw configuration object.
+     * @returns {object} Sanitized configuration object.
+     */
     #sanitizeConfig(config) {
         const sanitized = {};
 

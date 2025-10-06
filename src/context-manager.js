@@ -580,7 +580,7 @@ export class ContextManager {
     /**
      * Set importance level for an entity.
      * 
-     * @param {string} entityId - Entity ID
+     * @param {string|number} entityId - Entity ID
      * @param {string} importance - Importance level from ImportanceLevel enum
      * @returns {Promise<boolean>} Success status
      */
