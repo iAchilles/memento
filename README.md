@@ -2,6 +2,11 @@
 ***Some memories are best persisted.***
 
 Provides persistent memory capabilities through a SQLite-based knowledge graph that stores entities, observations, and relationships with semantic search using BGE-M3 embeddings for intelligent context retrieval across conversations.
+
+<a href="https://glama.ai/mcp/servers/@iAchilles/memento">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@iAchilles/memento/badge" alt="Memento MCP server" />
+</a>
+
 ## Features
 
 - Semantic vector search (sqlite-vec/pgvector, 1024d)
