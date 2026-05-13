@@ -428,10 +428,12 @@ export class SqliteGraphRepository {
      */
     async getRecentlyAccessedEntities(limit) {
         const rows = await this.db.all(
-            `SELECT DISTINCT entity_id
+            `SELECT entity_id,
+                    MAX(last_accessed) AS max_accessed
              FROM observations
              WHERE last_accessed IS NOT NULL
-             ORDER BY last_accessed DESC
+             GROUP BY entity_id
+             ORDER BY max_accessed DESC
              LIMIT ?`,
             [limit]
         );
