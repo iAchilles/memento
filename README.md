@@ -45,6 +45,25 @@ workflows.
 | `MEMORY_DB_DSN` / `DATABASE_URL` | PostgreSQL connection string consumed by the `pg` client. |
 | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Individual PostgreSQL connection parameters. Used when no DSN is provided. |
 | `PGSSLMODE` | When set to `require`, SSL will be enabled with `rejectUnauthorized: false`. |
+| `MEMENTO_WRITE_HOOK_PATH` | Optional path to a JSON Lines file. When set, Memento appends one event after each successful graph mutation. |
+
+### Write hook events
+
+Set `MEMENTO_WRITE_HOOK_PATH` when another process needs to react to memory writes without polling the full graph:
+
+```bash
+MEMENTO_WRITE_HOOK_PATH=/tmp/memento-events.jsonl memento
+```
+
+Each line is a JSON object with an ISO `timestamp`, an `operation`, and the changed entity/relation payload. Example:
+
+```json
+{"timestamp":"2026-05-05T16:33:16.619Z","operation":"create_entity","entity":{"name":"Hook Test","entityType":"test"}}
+```
+
+Supported operations are `create_entity`, `add_observations`, `create_relation`, `delete_entities`, `delete_relations`, `delete_observations`, and `set_importance`. Delete events are emitted only for records that were actually removed.
+
+Hook write failures are logged to stderr but do not fail the graph mutation that already succeeded. Consumers that require strict reconciliation should combine the hook with occasional `read_graph` or targeted `open_nodes` checks.
 
 ### PostgreSQL notes
 
@@ -108,6 +127,8 @@ This server exposes the following MCP tools:
 - `search_nodes`
 - `open_nodes`
 - `set_importance` - Set importance level (critical/important/normal/temporary/deprecated)
+
+When `MEMENTO_WRITE_HOOK_PATH` is configured, mutating tools also append JSONL write events for downstream consumers.
 #### An example of an instruction set that an LLM should know for effective memory handling (see MEMORY_PROTOCOL.md)
 
 ## Embedding Model

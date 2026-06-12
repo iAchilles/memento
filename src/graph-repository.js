@@ -25,9 +25,9 @@
  * @property {(entityId: number|string, content: string) => Promise<ObservationInsertResult>} insertObservation
  * @property {(rows: Array<{ observationId: number|string, entityId: number|string, embedding: Buffer }>) => Promise<void>} insertObservationVectors
  * @property {(fromId: number|string, toId: number|string, relationType: string) => Promise<boolean>} createRelation
- * @property {(names: string[]) => Promise<void>} deleteEntities
- * @property {(relations: Array<{ from: string, to: string, relationType: string }>) => Promise<void>} deleteRelations
- * @property {(entityId: number|string, observations: string[]) => Promise<void>} deleteObservations
+ * @property {(names: string[]) => Promise<string[]>} deleteEntities
+ * @property {(relations: Array<{ from: string, to: string, relationType: string }>) => Promise<Array<{ from: string, to: string, relationType: string }>>} deleteRelations
+ * @property {(entityId: number|string, observations: string[]) => Promise<string[]>} deleteObservations
  * @property {() => Promise<{ entities: Array<{ name: string, entityType: string, observations: string[] }>, relations: Array<{ from: string, to: string, relationType: string }> }>} readGraph
  * @property {(vector: number[], topK: number) => Promise<Array<{ entity_id: number|string, distance: number }>>} semanticSearch
  * @property {(entityIds: Array<number|string>) => Promise<Array<{ entity_id: number|string, name: string, entityType: string, created_at: string|null, last_accessed: string|null, access_count: number|null, importance: string|null }>>} fetchEntitiesWithDetails

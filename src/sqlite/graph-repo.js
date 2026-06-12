@@ -137,15 +137,20 @@ export class SqliteGraphRepository {
      * Deletes entities by their names.
      * @async
      * @param {string[]} names - Array of entity names to delete.
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} Names of entities that were deleted.
      */
     async deleteEntities(names) {
         if (!names.length) {
-            return;
+            return [];
         }
 
         const placeholders = names.map(() => '?').join(',');
-        await this.db.run(`DELETE FROM entities WHERE name IN (${placeholders})`, names);
+        const deletedRows = await this.db.all(
+            `DELETE FROM entities WHERE name IN (${placeholders}) RETURNING name`,
+            names
+        );
+
+        return deletedRows.map(row => row.name);
     }
 
     /**
@@ -153,18 +158,25 @@ export class SqliteGraphRepository {
      * @async
      * @param {Array<{from: string, to: string, relationType: string}>} relations
      *   Array of relations to delete with entity names and relation type.
-     * @returns {Promise<void>}
+     * @returns {Promise<Array<{from: string, to: string, relationType: string}>>}
+     *   Array of relations that were deleted.
      */
     async deleteRelations(relations) {
+        const deleted = [];
         for (const relation of relations) {
             const fromId = await this.getEntityId(relation.from);
             const toId = await this.getEntityId(relation.to);
             if (!fromId || !toId) continue;
-            await this.db.run(
-                `DELETE FROM relations WHERE from_id = ? AND to_id = ? AND relationType = ?`,
+            const deletedRows = await this.db.all(
+                `DELETE FROM relations WHERE from_id = ? AND to_id = ? AND relationType = ? RETURNING id`,
                 [fromId, toId, relation.relationType]
             );
+            if (deletedRows.length) {
+                deleted.push(relation);
+            }
         }
+
+        return deleted;
     }
 
     /**
@@ -172,18 +184,20 @@ export class SqliteGraphRepository {
      * @async
      * @param {number} entityId - Entity ID from which to delete observations.
      * @param {string[]} observations - Array of observation content strings to delete.
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} Observation texts that were deleted.
      */
     async deleteObservations(entityId, observations) {
         if (!observations.length) {
-            return;
+            return [];
         }
 
         const placeholders = observations.map(() => '?').join(',');
-        await this.db.run(
-            `DELETE FROM observations WHERE entity_id = ? AND content IN (${placeholders})`,
+        const deletedRows = await this.db.all(
+            `DELETE FROM observations WHERE entity_id = ? AND content IN (${placeholders}) RETURNING content`,
             [entityId, ...observations]
         );
+
+        return deletedRows.map(row => row.content);
     }
 
     /**

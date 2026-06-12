@@ -234,19 +234,22 @@ export class PostgresGraphRepository {
      * Deletes entities by their names.
      * @async
      * @param {string[]} names - Array of entity names to delete.
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} Names of entities that were deleted.
      */
     async deleteEntities(names) {
         if (!names.length) {
-            return;
+            return [];
         }
 
-        await this.#query(
+        const rows = await this.#query(
             `DELETE
              FROM entities
-             WHERE name = ANY ($1)`,
+             WHERE name = ANY ($1)
+             RETURNING name`,
             [ names ]
         );
+
+        return rows.map(row => row.name);
     }
 
     /**
@@ -254,9 +257,11 @@ export class PostgresGraphRepository {
      * @async
      * @param {Array<{from: string, to: string, relationType: string}>} relations
      *   Array of relations to delete with entity names and relation type.
-     * @returns {Promise<void>}
+     * @returns {Promise<Array<{from: string, to: string, relationType: string}>>}
+     *   Array of relations that were deleted.
      */
     async deleteRelations(relations) {
+        const deleted = [];
         for (const relation of relations) {
             const fromId = await this.getEntityId(relation.from);
             const toId = await this.getEntityId(relation.to);
@@ -264,15 +269,21 @@ export class PostgresGraphRepository {
                 continue;
             }
 
-            await this.#query(
+            const rows = await this.#query(
                 `DELETE
                  FROM relations
                  WHERE from_id = $1
                    AND to_id = $2
-                   AND relationtype = $3`,
+                   AND relationtype = $3
+                 RETURNING id`,
                 [ fromId, toId, relation.relationType ]
             );
+            if (rows.length) {
+                deleted.push(relation);
+            }
         }
+
+        return deleted;
     }
 
     /**
@@ -280,20 +291,23 @@ export class PostgresGraphRepository {
      * @async
      * @param {number} entityId - Entity ID from which to delete observations.
      * @param {string[]} observations - Array of observation content strings to delete.
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} Observation texts that were deleted.
      */
     async deleteObservations(entityId, observations) {
         if (!observations.length) {
-            return;
+            return [];
         }
 
-        await this.#query(
+        const rows = await this.#query(
             `DELETE
              FROM observations
              WHERE entity_id = $1
-               AND content = ANY ($2)`,
+               AND content = ANY ($2)
+             RETURNING content`,
             [ entityId, observations ]
         );
+
+        return rows.map(row => row.content);
     }
 
     /**

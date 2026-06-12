@@ -7,6 +7,7 @@
 
 import { pipeline } from '@xenova/transformers';
 import { SearchContextManager } from './search-context-manager.js';
+import { WriteHook } from './write-hook.js';
 
 export class KnowledgeGraphManager {
     /**
@@ -20,14 +21,20 @@ export class KnowledgeGraphManager {
     /** @type {SearchContextManager} */
     #searchContextManager;
 
+    /** @type {WriteHook} */
+    #writeHook;
+
     /**
      * Creates a new KnowledgeGraphManager.
      * @param {import('./graph-repository.js').GraphRepository} repository
      *   Graph repository implementation for data persistence.
+     * @param {{ writeHook?: WriteHook, writeHookOptions?: { path?: string|null } }} [options]
+     *   Optional write hook configuration.
      */
-    constructor(repository) {
+    constructor(repository, options = {}) {
         this.#repository = repository;
         this.#searchContextManager = new SearchContextManager(repository);
+        this.#writeHook = options.writeHook || new WriteHook(options.writeHookOptions);
     }
 
     /**
@@ -45,6 +52,10 @@ export class KnowledgeGraphManager {
             if (!existingId) {
                 await this.#repository.createEntity(entity.name, entity.entityType);
                 created.push(entity);
+                await this.#notifyWrite({
+                    operation: 'create_entity',
+                    entity: { name: entity.name, entityType: entity.entityType }
+                });
             }
             if (entity.observations?.length) {
                 await this.addObservations([{ entityName: entity.name, contents: entity.observations }]);
@@ -80,6 +91,11 @@ export class KnowledgeGraphManager {
                     embedding: embeddings[index]
                 }));
                 await this.#repository.insertObservationVectors(vectorRows);
+                await this.#notifyWrite({
+                    operation: 'add_observations',
+                    entityName,
+                    observations: inserted.map(item => item.content)
+                });
             }
             results.push({ entityName, addedObservations: inserted.map(item => item.content) });
         }
@@ -102,6 +118,7 @@ export class KnowledgeGraphManager {
             const inserted = await this.#repository.createRelation(fromId, toId, relation.relationType);
             if (inserted) {
                 created.push(relation);
+                await this.#notifyWrite({ operation: 'create_relation', relation });
             }
         }
         return created;
@@ -114,7 +131,10 @@ export class KnowledgeGraphManager {
      * @returns {Promise<void>}
      */
     async deleteEntities(names) {
-        await this.#repository.deleteEntities(names);
+        const deletedNames = await this.#repository.deleteEntities(names);
+        if (deletedNames.length) {
+            await this.#notifyWrite({ operation: 'delete_entities', entityNames: deletedNames });
+        }
     }
 
     /**
@@ -125,7 +145,10 @@ export class KnowledgeGraphManager {
      * @returns {Promise<void>}
      */
     async deleteRelations(relations) {
-        await this.#repository.deleteRelations(relations);
+        const deletedRelations = await this.#repository.deleteRelations(relations);
+        if (deletedRelations.length) {
+            await this.#notifyWrite({ operation: 'delete_relations', relations: deletedRelations });
+        }
     }
 
     /**
@@ -139,7 +162,10 @@ export class KnowledgeGraphManager {
         for (const { entityName, observations } of list) {
             const entityId = await this.#repository.getEntityId(entityName);
             if (!entityId) continue;
-            await this.#repository.deleteObservations(entityId, observations);
+            const deletedObservations = await this.#repository.deleteObservations(entityId, observations);
+            if (deletedObservations.length) {
+                await this.#notifyWrite({ operation: 'delete_observations', entityName, observations: deletedObservations });
+            }
         }
     }
 
@@ -333,6 +359,10 @@ export class KnowledgeGraphManager {
 
             const success = await this.#searchContextManager.setImportance(entityId, importance);
 
+            if (success) {
+                await this.#notifyWrite({ operation: 'set_importance', entityName, importance });
+            }
+
             return {
                 success,
                 entityName,
@@ -345,5 +375,15 @@ export class KnowledgeGraphManager {
         } catch (error) {
             return { success: false, error: error.message };
         }
+    }
+
+    /**
+     * Emits a mutation event for configured write hooks.
+     * @private
+     * @param {object} event
+     * @returns {Promise<void>}
+     */
+    async #notifyWrite(event) {
+        await this.#writeHook.notify(event);
     }
 }
